@@ -1,0 +1,7 @@
+# Monitoring Configuration
+monitoring:
+  interval: 60  # Time in seconds between checks
+  services:
+    - name: service_name
+      url: http://example.com/health
+      critical: true
