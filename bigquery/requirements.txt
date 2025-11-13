@@ -1,0 +1,6 @@
+# BigQuery Python client
+google-cloud-bigquery>=3.11.0
+
+# Additional dependencies for data manipulation (optional)
+# pandas>=2.0.0
+# numpy>=1.24.0
