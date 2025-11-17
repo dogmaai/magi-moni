@@ -1,0 +1,206 @@
+# Magi-Moni Configuration
+# Project: screen-share-459802
+# Region: asia-northeast1
+# Created: 2025-11-17
+
+monitoring:
+  project_id: screen-share-459802
+  region: asia-northeast1
+  environment: production
+  
+  # グローバル設定
+  defaults:
+    interval: 60          # デフォルト監視間隔（秒）
+    timeout: 30           # タイムアウト（秒）
+    retries: 3            # リトライ回数
+    notification_delay: 5 # 通知遅延（分）
+
+  # 通知設定
+  notifications:
+    email:
+      enabled: true
+      recipients:
+        - devops@example.com
+    slack:
+      enabled: true
+      webhook_url: ${SLACK_WEBHOOK_URL}
+      channels:
+        warning: "#magi-alerts"
+        critical: "#magi-critical"
+    sms:
+      enabled: false
+      phone_number: "+81-xxx-xxxx"
+      trigger: critical
+
+  # ========== サービス監視設定 ==========
+  services:
+    # 🔴 magi-core (Cloud Run - AI Consensus Engine)
+    - name: magi-core
+      type: http
+      enabled: true
+      url: https://magi-app-dtrah63zyq-an.a.run.app
+      interval: 30
+      timeout: 10
+      critical: true
+      
+      endpoints:
+        - path: /healthz
+          method: GET
+          expected_status: 200
+          alert_on_fail: true
+        
+        - path: /status
+          method: GET
+          expected_status: 200
+        
+        - path: /api/stock/ai-analysis/SESAI
+          method: POST
+          body: '{}'
+          expected_status: 200
+          timeout: 25
+      
+      thresholds:
+        response_time_warning_ms: 3000
+        response_time_critical_ms: 5000
+        error_rate_warning_percent: 0.5
+        error_rate_critical_percent: 1.0
+      
+      metrics:
+        cpu_usage_warning: 80
+        cpu_usage_critical: 95
+        memory_usage_warning: 85
+        memory_usage_critical: 95
+        request_rate_anomaly_detection: true
+      
+      retry_on_failure: true
+
+    # 🟢 magi-stg (BigQuery - Storage)
+    - name: magi-stg
+      type: bigquery
+      enabled: true
+      project_id: screen-share-459802
+      dataset: magi_analysis
+      table: stock_ai_analysis
+      interval: 300
+      critical: true
+      
+      thresholds:
+        table_size_warning_gb: 10
+        table_size_critical_gb: 50
+        row_count_critical: 0
+        last_modified_critical_hours: 1
+      
+      queries:
+        - name: "row_count_check"
+          query: "SELECT COUNT(*) as count FROM `screen-share-459802.magi_analysis.stock_ai_analysis`"
+          critical_if_zero: true
+        
+        - name: "latest_update_check"
+          query: "SELECT MAX(timestamp) as latest FROM `screen-share-459802.magi_analysis.stock_ai_analysis`"
+          critical_if_older_than_seconds: 3600
+      
+      metrics:
+        query_latency_warning_sec: 30
+        query_latency_critical_sec: 60
+        slot_usage_warning_percent: 80
+        slot_usage_critical_percent: 95
+
+    # 🟣 magi-ac (Cloud Functions - Analytics)
+    - name: magi-ac
+      type: cloud_function
+      enabled: true
+      project_id: screen-share-459802
+      function_name: magi-analytics-processor
+      interval: 60
+      critical: true
+      
+      thresholds:
+        execution_time_warning_sec: 120
+        execution_time_critical_sec: 300
+        error_count_warning: 0
+        error_count_critical: 5
+        memory_usage_warning_percent: 80
+        memory_usage_critical_percent: 95
+
+    # 🟡 magi-ui (Cloud Run - User Interface)
+    - name: magi-ui
+      type: http
+      enabled: true
+      url: https://magi-ui.web.app
+      interval: 60
+      critical: false
+      
+      endpoints:
+        - path: /
+          method: GET
+          expected_status: 200
+        
+        - path: /dashboard
+          method: GET
+          expected_status: 200
+      
+      thresholds:
+        response_time_warning_ms: 2000
+        response_time_critical_ms: 5000
+        error_rate_warning_percent: 1.0
+        error_rate_critical_percent: 5.0
+
+    # 🔵 Cloud Logging
+    - name: cloud-logging
+      type: cloud_logging
+      enabled: true
+      project_id: screen-share-459802
+      interval: 300
+      critical: true
+      
+      filters:
+        - name: "error_logs"
+          filter: 'severity=ERROR'
+          threshold_per_hour: 5
+          severity: warning
+        
+        - name: "critical_errors"
+          filter: 'severity=CRITICAL'
+          threshold_per_hour: 1
+          severity: critical
+
+  # ========== SLA 監視 ==========
+  sla:
+    enabled: true
+    window_days: 30
+    
+    objectives:
+      - name: "availability"
+        target: 99.9
+        metric: "uptime"
+      
+      - name: "response_time"
+        target: 3.0
+        metric: "p99_latency"
+      
+      - name: "error_rate"
+        target: 0.1
+        metric: "error_percentage"
+
+  # ========== アラート設定 ==========
+  alerting:
+    enabled: true
+    
+    escalation_policy:
+      warning:
+        delay_minutes: 5
+        notify: [email, slack]
+      
+      critical:
+        delay_minutes: 1
+        notify: [email, slack]
+
+  # ========== ロギング ==========
+  logging:
+    enabled: true
+    level: info
+    file_path: /var/log/magi-moni/
+    retention_days: 30
+    archive_to_gcs: true
+    gcs_bucket: gs://magi-logs/monitoring/
+

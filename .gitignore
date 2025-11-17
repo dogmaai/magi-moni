@@ -1,3 +1,28 @@
-node_modules/
-.env
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!terraform.tfvars.example
+
+# Logs
 *.log
+logs/
+
+# Sensitive
+.env
+secrets/
+*.pem
+*.key
+
+# OS
+.DS_Store
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
