@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magi-Moni Dashboard - システム監視</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            opacity: 0.9;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .card h2 {
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: #667eea;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+
+        .status-summary {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+        }
+
+        .status-item {
+            text-align: center;
+        }
+
+        .status-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .status-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .up { color: #10b981; }
+        .down { color: #ef4444; }
+        .total { color: #667eea; }
+
+        .service-list {
+            margin-top: 15px;
+        }
+
+        .service-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            margin: 8px 0;
+            background: #f9fafb;
+            border-radius: 6px;
+            border-left: 4px solid #ddd;
+        }
+
+        .service-item.up {
+            border-left-color: #10b981;
+        }
+
+        .service-item.down {
+            border-left-color: #ef4444;
+        }
+
+        .service-info {
+            flex: 1;
+        }
+
+        .service-name {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .service-url {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .service-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+
+        .status-badge.up {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-badge.down {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .response-time {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .alerts-container {
+            margin-top: 15px;
+        }
+
+        .alert {
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .alert.warning {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .alert.critical {
+            background: #fee2e2;
+            border-left: 4px solid #dc2626;
+        }
+
+        .alert-icon {
+            font-size: 1.5em;
+        }
+
+        .alert-content {
+            flex: 1;
+        }
+
+        .alert-message {
+            font-weight: 500;
+        }
+
+        .alert-time {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .chart-container {
+            height: 200px;
+            margin-top: 15px;
+            position: relative;
+        }
+
+        canvas {
+            max-width: 100%;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .metric-box {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+        }
+
+        .metric-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        th {
+            background: #f9fafb;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        tr:hover {
+            background: #f9fafb;
+        }
+
+        .refresh-info {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 20px;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 20px;
+            color: #999;
+            font-style: italic;
+        }
+
+        .date-filter {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .date-filter input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+
+        .date-filter button {
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .date-filter button:hover {
+            background: #5568d3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎯 Magi-Moni Dashboard</h1>
+            <p>システム監視・モニタリングダッシュボード</p>
+        </header>
+
+        <!-- Alerts Section -->
+        <div id="alertsSection" style="display: none;">
+            <div class="card">
+                <h2>⚠️ アラート通知</h2>
+                <div id="alertsContainer" class="alerts-container"></div>
+            </div>
+        </div>
+
+        <!-- Main Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Health Status -->
+            <div class="card">
+                <h2>🏥 サービス死活監視</h2>
+                <div class="status-summary">
+                    <div class="status-item">
+                        <div class="status-number total" id="totalServices">0</div>
+                        <div class="status-label">Total</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-number up" id="upServices">0</div>
+                        <div class="status-label">稼働中</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-number down" id="downServices">0</div>
+                        <div class="status-label">停止中</div>
+                    </div>
+                </div>
+                <div id="serviceList" class="service-list"></div>
+            </div>
+
+            <!-- CPU Usage -->
+            <div class="card">
+                <h2>💻 CPU使用率</h2>
+                <div class="metric-box">
+                    <div class="metric-label">現在の使用率</div>
+                    <div class="metric-value" id="cpuUsage">0%</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="cpuProgress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="chart-container" id="cpuChartContainer"></div>
+            </div>
+
+            <!-- Memory Usage -->
+            <div class="card">
+                <h2>💾 メモリ使用率</h2>
+                <div class="metric-box">
+                    <div class="metric-label">現在の使用率</div>
+                    <div class="metric-value" id="memoryUsage">0%</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="memoryProgress" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="chart-container" id="memoryChartContainer"></div>
+            </div>
+        </div>
+
+        <!-- API Request Summary -->
+        <div class="card">
+            <h2>📊 APIリクエスト統計</h2>
+            <div class="date-filter">
+                <input type="date" id="startDate">
+                <input type="date" id="endDate">
+                <button onclick="loadRequestSummary()">更新</button>
+            </div>
+            
+            <div class="metric-grid">
+                <div class="metric-box">
+                    <div class="metric-label">総リクエスト数</div>
+                    <div class="metric-value" id="totalRequests">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">成功率</div>
+                    <div class="metric-value" id="successRate">0%</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">成功</div>
+                    <div class="metric-value up" id="successfulRequests">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">失敗</div>
+                    <div class="metric-value down" id="failedRequests">0</div>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 20px; color: #667eea;">エンドポイント別統計</h3>
+            <table id="endpointTable">
+                <thead>
+                    <tr>
+                        <th>エンドポイント</th>
+                        <th>総数</th>
+                        <th>成功</th>
+                        <th>失敗</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+
+            <h3 style="margin-top: 20px; color: #667eea;">ユーザー別統計</h3>
+            <table id="userTable">
+                <thead>
+                    <tr>
+                        <th>ユーザー</th>
+                        <th>総数</th>
+                        <th>成功</th>
+                        <th>失敗</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <div class="refresh-info">
+            自動更新: 30秒ごと | 最終更新: <span id="lastUpdate">-</span>
+        </div>
+    </div>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>

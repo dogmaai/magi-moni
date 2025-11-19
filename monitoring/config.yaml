@@ -2,6 +2,12 @@
 monitoring:
   interval: 60  # Time in seconds between checks
   services:
-    - name: service_name
-      url: http://example.com/health
+    - name: Google
+      url: https://www.google.com
+      critical: false
+    - name: GitHub API
+      url: https://api.github.com
+      critical: false
+    - name: Example Service
+      url: http://example.com
       critical: true
