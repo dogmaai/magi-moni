@@ -11,7 +11,7 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok',
     service: 'magi-moni',
-    version: '1.2.0',
+    version: '1.1.0',
     resultsCount: tradeResults.length
   });
 });
@@ -42,7 +42,7 @@ app.post('/pubsub/trade-result', (req, res) => {
     res.status(200).send('OK');
   } catch (error) {
     console.error('[MONI] Error processing message:', error.message);
-    res.status(200).send('OK');
+    res.status(200).send('OK'); // エラーでも200を返してリトライを防ぐ
   }
 });
 
