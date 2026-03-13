@@ -410,7 +410,7 @@ app.post('/webhook/telegram', async (req, res) => {
 app.post('/setup/webhook', async (req, res) => {
   try {
     const webhookUrl = `https://magi-moni-398890937507.asia-northeast1.run.app/webhook/telegram`;
-    const result = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
+    const result = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: webhookUrl }),
