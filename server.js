@@ -311,6 +311,114 @@ app.post('/report/weekly', async (req, res) => {
   }
 });
 
+
+// ---- Telegram Bot コマンドハンドラー ----
+
+async function handleBotCommand(chatId, text) {
+  const cmd = text.split(' ')[0].toLowerCase().replace('@magi_claw_bot', '');
+
+  if (cmd === '/help' || cmd === '/start') {
+    return sendTelegram(`[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/help    - このメッセージ`);
+  }
+
+  if (cmd === '/status') {
+    try {
+      const [today, overall] = await Promise.all([queryTodaySummary(), queryOverallStats()]);
+      const llmVals = Object.entries(llmHealthState);
+      const upList = llmVals.filter(([,v]) => v.status === 'UP').map(([k]) => k);
+      const downList = llmVals.filter(([,v]) => v.status === 'DOWN').map(([k]) => k);
+      let msg = `[MAGI Status] ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}\n\n`;
+      msg += `総合勝率: ${overall.overall_wr ?? '--'}% (${overall.total_wins ?? 0}W ${overall.total_loses ?? 0}L)\n`;
+      msg += `評価済み: ${(overall.total_wins ?? 0) + (overall.total_loses ?? 0)} 件\n\n`;
+      msg += `本日: WIN ${today.wins} / LOSE ${today.loses} / HOLD ${today.holds}\n\n`;
+      msg += `LLM API UP: ${upList.length > 0 ? upList.join(', ') : 'なし'}\n`;
+      if (downList.length > 0) msg += `DOWN: ${downList.join(', ')}\n`;
+      return sendTelegram(msg);
+    } catch (e) { return sendTelegram(`[MAGI] /status エラー: ${e.message}`); }
+  }
+
+  if (cmd === '/wr') {
+    try {
+      const rows = await queryTradeMetrics();
+      let msg = `[MAGI] LLM x 方向別勝率\n\n`;
+      const byLLM = {};
+      for (const r of rows) {
+        if (!byLLM[r.llm_provider]) byLLM[r.llm_provider] = [];
+        byLLM[r.llm_provider].push(r);
+      }
+      for (const [llm, entries] of Object.entries(byLLM)) {
+        msg += `${llm.toUpperCase()}\n`;
+        for (const r of entries) {
+          const wr = r.win_rate ?? '--';
+          const blocked = r.win_rate <= 30 && r.loses >= 3 ? ' [BLOCKED]' : '';
+          msg += `  ${r.side}: ${wr}% (${r.wins}W ${r.loses}L)${blocked}\n`;
+        }
+      }
+      return sendTelegram(msg);
+    } catch (e) { return sendTelegram(`[MAGI] /wr エラー: ${e.message}`); }
+  }
+
+  if (cmd === '/jobs') {
+    try {
+      const entries = Object.entries(jobsState);
+      let msg = `[MAGI] Cloud Run Jobs\n\n`;
+      if (entries.length === 0) {
+        msg += '取得中... 10分後に再度お試しください';
+      } else {
+        for (const [name, j] of entries) {
+          const icon = j.status === 'SUCCESS' ? 'OK' : j.status === 'FAILED' ? 'FAIL' : j.status === 'RUNNING' ? 'RUN' : '??';
+          const diff = j.lastRun ? Math.floor((Date.now() - new Date(j.lastRun)) / 60000) : null;
+          const ago = diff !== null ? (diff < 60 ? `${diff}m前` : `${Math.floor(diff/60)}h前`) : '--';
+          msg += `[${icon}] ${name} (${ago})\n`;
+        }
+      }
+      return sendTelegram(msg);
+    } catch (e) { return sendTelegram(`[MAGI] /jobs エラー: ${e.message}`); }
+  }
+
+  if (cmd === '/today') {
+    try {
+      const query = `SELECT symbol, side, llm_provider, result, timestamp FROM \`${PROJECT_ID}.magi_core.trades_active\` WHERE DATE(timestamp) = CURRENT_DATE('America/New_York') ORDER BY timestamp DESC LIMIT 20`;
+      const [rows] = await bq.query({ query, useLegacySql: false });
+      if (rows.length === 0) return sendTelegram('[MAGI] 本日の取引はまだありません');
+      let msg = `[MAGI] 本日の取引 (${rows.length}件)\n\n`;
+      for (const r of rows) {
+        const result = r.result || 'pending';
+        const time = new Date(r.timestamp?.value || r.timestamp).toLocaleTimeString('ja-JP', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' });
+        msg += `${time} ${r.symbol} ${r.side} [${r.llm_provider}] -> ${result}\n`;
+      }
+      return sendTelegram(msg);
+    } catch (e) { return sendTelegram(`[MAGI] /today エラー: ${e.message}`); }
+  }
+
+  return sendTelegram(`[MAGI] 不明なコマンド: ${cmd}\n/help でコマンド一覧を確認してください`);
+}
+
+// Telegram Webhook
+app.post('/webhook/telegram', async (req, res) => {
+  res.status(200).send('OK');
+  try {
+    const update = req.body;
+    const message = update.message || update.edited_message;
+    if (!message || !message.text || !message.text.startsWith('/')) return;
+    console.log(`[BOT] Command: ${message.text}`);
+    await handleBotCommand(message.chat.id.toString(), message.text);
+  } catch (e) { console.error('[BOT] Webhook error:', e.message); }
+});
+
+// Webhook登録
+app.post('/setup/webhook', async (req, res) => {
+  try {
+    const webhookUrl = `https://magi-moni-398890937507.asia-northeast1.run.app/webhook/telegram`;
+    const result = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: webhookUrl }),
+    });
+    const data = await result.json();
+    res.json({ webhookUrl, result: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`MAGI Monitoring v3.0 on port ${PORT}`);
 });
