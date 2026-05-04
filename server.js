@@ -54,8 +54,11 @@ async function sendTelegram(message) {
 }
 
 // ===== BigQueryクエリヘルパー =====
-async function runQuery(query) {
-  const [rows] = await bq.query({ query });
+async function runQuery(query, params, types) {
+  const options = { query };
+  if (params) options.params = params;
+  if (types) options.types = types;
+  const [rows] = await bq.query(options);
   return rows;
 }
 
@@ -74,7 +77,7 @@ async function generateDailyReport() {
       ROUND(COUNTIF(result = 'WIN') / NULLIF(COUNT(*), 0) * 100, 1) AS win_rate,
       ROUND(SUM(pnl_amount), 2) AS total_pnl_usd
     FROM \`${PROJECT_ID}.magi_core.trades_active\`
-    WHERE DATE(timestamp) = '${today}'
+    WHERE DATE(timestamp) = @today
       AND result IN ('WIN','LOSE')
     GROUP BY llm_provider
     ORDER BY total_pnl_usd DESC
@@ -92,16 +95,19 @@ async function generateDailyReport() {
   const blockQuery = `
     SELECT blocked_by, COUNT(*) AS count
     FROM \`${PROJECT_ID}.magi_core.trades\`
-    WHERE DATE(timestamp) = '${today}'
+    WHERE DATE(timestamp) = @today
       AND trade_mode = 'BLOCKED'
     GROUP BY blocked_by
     ORDER BY count DESC
   `;
 
+  const todayParams = { today };
+  const todayTypes = { today: 'DATE' };
+
   const [trades, l4Blocks, blockStats] = await Promise.all([
-    runQuery(tradeQuery).catch(() => []),
+    runQuery(tradeQuery, todayParams, todayTypes).catch(() => []),
     runQuery(l4Query).catch(() => []),
-    runQuery(blockQuery).catch(() => [])
+    runQuery(blockQuery, todayParams, todayTypes).catch(() => [])
   ]);
 
   // レポート構築
@@ -159,7 +165,7 @@ async function generateWeeklyReport() {
       ROUND(COUNTIF(result = 'WIN') / NULLIF(COUNT(*), 0) * 100, 1) AS win_rate,
       COUNT(*) AS trades
     FROM \`${PROJECT_ID}.magi_core.trades_active\`
-    WHERE DATE(timestamp) BETWEEN '${startDate}' AND '${endDate}'
+    WHERE DATE(timestamp) BETWEEN @startDate AND @endDate
       AND result IN ('WIN','LOSE')
     GROUP BY trade_date
     ORDER BY trade_date
@@ -175,7 +181,7 @@ async function generateWeeklyReport() {
       ROUND(SUM(pnl_amount), 2) AS total_pnl_usd,
       ROUND(AVG(pnl_percent), 2) AS avg_pnl_pct
     FROM \`${PROJECT_ID}.magi_core.trades_active\`
-    WHERE DATE(timestamp) BETWEEN '${startDate}' AND '${endDate}'
+    WHERE DATE(timestamp) BETWEEN @startDate AND @endDate
       AND result IN ('WIN','LOSE')
     GROUP BY llm_provider
     ORDER BY win_rate DESC
@@ -193,9 +199,12 @@ async function generateWeeklyReport() {
     LIMIT 3
   `;
 
+  const dateParams = { startDate, endDate };
+  const dateTypes = { startDate: 'DATE', endDate: 'DATE' };
+
   const [trend, llmPerf, patterns] = await Promise.all([
-    runQuery(trendQuery).catch(() => []),
-    runQuery(llmPerfQuery).catch(() => []),
+    runQuery(trendQuery, dateParams, dateTypes).catch(() => []),
+    runQuery(llmPerfQuery, dateParams, dateTypes).catch(() => []),
     runQuery(patternQuery).catch(() => [])
   ]);
 
