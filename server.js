@@ -8,6 +8,9 @@ const PROJECT_ID = process.env.PROJECT_ID || 'screen-share-459802';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const AKA1_MODEL = process.env.AKA1_MODEL || 'claude-3-5-haiku-20241022';
+const AKA1_MAX_TOOL_ITERATIONS = 5;
 
 app.use(express.json());
 
@@ -17,16 +20,16 @@ const bq = new BigQuery({ projectId: PROJECT_ID });
 const tradeResults = [];
 
 // ===== Telegram送信ヘルパー =====
-async function sendTelegram(message) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+async function sendTelegramTo(chatId, message, { parseMode = 'HTML' } = {}) {
+  if (!TELEGRAM_BOT_TOKEN || !chatId) {
     console.log('[MONI] Telegram not configured, skipping');
     return;
   }
   return new Promise((resolve) => {
     const body = JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
+      chat_id: chatId,
       text: message,
-      parse_mode: 'HTML'
+      parse_mode: parseMode
     });
     const options = {
       hostname: 'api.telegram.org',
@@ -40,7 +43,7 @@ async function sendTelegram(message) {
     const req = https.request(options, (res) => {
       res.on('data', () => {});
       res.on('end', () => {
-        console.log(`[MONI] Telegram sent (status ${res.statusCode})`);
+        console.log(`[MONI] Telegram sent to ${chatId} (status ${res.statusCode})`);
         resolve();
       });
     });
@@ -51,6 +54,233 @@ async function sendTelegram(message) {
     req.write(body);
     req.end();
   });
+}
+
+async function sendTelegram(message) {
+  return sendTelegramTo(TELEGRAM_CHAT_ID, message);
+}
+
+async function sendTypingAction(chatId) {
+  if (!TELEGRAM_BOT_TOKEN || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, action: 'typing' })
+    });
+  } catch (_) { /* ignore typing failures */ }
+}
+
+// ===== AKA-1 (Claude Haiku) - 自然言語 Telegram チャット =====
+//
+// 仕様参照: dogmaai/magi-stg/MEMORY.md, specifications/system/overview.md
+// 役割: Telegram で自然文を受け、tool calling で BigQuery を直接照会して応答する。
+//       slash コマンド (/status, /wr, /jobs, /today, /help) は従来通り別経路で処理。
+// 認可: TELEGRAM_CHAT_ID と一致する chat からのメッセージのみ受け付ける。
+// ツール: 読み取り専用の事前定義クエリのみ公開する（任意 SQL は意図的に未公開）。
+
+const AKA1_TOOLS = [
+  {
+    name: 'get_today_trades',
+    description:
+      '本日 (America/New_York) の取引一覧を取得する。symbol / side / llm_provider / result / pnl_amount / timestamp を返す。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'integer',
+          description: '取得する最大件数 (1-100, default 20)'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_winrate_by_llm',
+    description:
+      '指定期間の LLM × 方向別の勝率を返す。各行: llm_provider / side / trades / wins / losses / win_rate。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days: {
+          type: 'integer',
+          description: '過去何日間を集計するか (1-90, default 30)'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_daily_summary',
+    description:
+      '指定日 (YYYY-MM-DD, America/New_York) の取引サマリーを返す。LLM 別の trades / wins / losses / win_rate / total_pnl_usd を含む。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date: {
+          type: 'string',
+          description: 'YYYY-MM-DD 形式の日付 (省略時は本日)'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_l4_probation',
+    description:
+      '現在 L4 プロベーション中の LLM × 方向と経過時間を返す。空配列ならブロック無し。',
+    input_schema: { type: 'object', properties: {} }
+  }
+];
+
+async function akaTool_getTodayTrades({ limit }) {
+  const lim = Math.max(1, Math.min(Number(limit) || 20, 100));
+  const query = `
+    SELECT symbol, side, llm_provider, result,
+           ROUND(pnl_amount, 2) AS pnl_usd, timestamp
+    FROM \`${PROJECT_ID}.magi_core.trades_active\`
+    WHERE DATE(timestamp, 'America/New_York') = CURRENT_DATE('America/New_York')
+    ORDER BY timestamp DESC
+    LIMIT @lim
+  `;
+  const rows = await runQuery(query, { lim }, { lim: 'INT64' });
+  return { count: rows.length, trades: rows };
+}
+
+async function akaTool_getWinrateByLlm({ days }) {
+  const d = Math.max(1, Math.min(Number(days) || 30, 90));
+  const query = `
+    SELECT
+      llm_provider,
+      side,
+      COUNT(*) AS trades,
+      COUNTIF(result = 'WIN') AS wins,
+      COUNTIF(result = 'LOSE') AS losses,
+      ROUND(COUNTIF(result = 'WIN') / NULLIF(COUNTIF(result IN ('WIN','LOSE')), 0) * 100, 1) AS win_rate
+    FROM \`${PROJECT_ID}.magi_core.trades_active\`
+    WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @d DAY)
+      AND result IN ('WIN','LOSE')
+    GROUP BY llm_provider, side
+    ORDER BY llm_provider, side
+  `;
+  const rows = await runQuery(query, { d }, { d: 'INT64' });
+  return { days: d, rows };
+}
+
+async function akaTool_getDailySummary({ date }) {
+  const target = date || new Date().toISOString().split('T')[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) {
+    throw new Error('date は YYYY-MM-DD 形式で指定してください');
+  }
+  const query = `
+    SELECT
+      llm_provider,
+      COUNT(*) AS trades,
+      COUNTIF(result = 'WIN') AS wins,
+      COUNTIF(result = 'LOSE') AS losses,
+      ROUND(COUNTIF(result = 'WIN') / NULLIF(COUNT(*), 0) * 100, 1) AS win_rate,
+      ROUND(SUM(pnl_amount), 2) AS total_pnl_usd
+    FROM \`${PROJECT_ID}.magi_core.trades_active\`
+    WHERE DATE(timestamp, 'America/New_York') = @date
+      AND result IN ('WIN','LOSE')
+    GROUP BY llm_provider
+    ORDER BY total_pnl_usd DESC
+  `;
+  const rows = await runQuery(query, { date: target }, { date: 'DATE' });
+  return { date: target, rows };
+}
+
+async function akaTool_getL4Probation() {
+  const query = `
+    SELECT llm_provider, side, blocked_at,
+           TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), blocked_at, HOUR) AS hours_blocked
+    FROM \`${PROJECT_ID}.magi_core.l4_probation\`
+    ORDER BY blocked_at DESC
+  `;
+  const rows = await runQuery(query).catch(() => []);
+  return { count: rows.length, rows };
+}
+
+const AKA1_TOOL_HANDLERS = {
+  get_today_trades: akaTool_getTodayTrades,
+  get_winrate_by_llm: akaTool_getWinrateByLlm,
+  get_daily_summary: akaTool_getDailySummary,
+  get_l4_probation: akaTool_getL4Probation
+};
+
+async function executeAka1Tool(name, input) {
+  const handler = AKA1_TOOL_HANDLERS[name];
+  if (!handler) throw new Error(`Unknown tool: ${name}`);
+  return handler(input || {});
+}
+
+async function callHaikuWithTools(userMessage) {
+  if (!ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY が未設定です');
+  }
+  const systemPrompt =
+    'あなたは MAGI トレーディングシステムの監視 bot 「AKA-1」(Claude 3.5 Haiku) です。' +
+    '日本語で簡潔に応答してください。' +
+    '取引・勝率・P&L・L4 プロベーション等のデータは必ず提供された tool を使って取得し、推測で答えないこと。' +
+    '勝率や金額には具体的な数値と件数 (n) を付記してください。' +
+    'Telegram 宛のため、絵文字や箇条書きは控えめに、HTML タグは使わずプレーンテキストで返してください。';
+
+  const messages = [{ role: 'user', content: userMessage }];
+
+  for (let i = 0; i < AKA1_MAX_TOOL_ITERATIONS; i++) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: AKA1_MODEL,
+        max_tokens: 1024,
+        system: systemPrompt,
+        tools: AKA1_TOOLS,
+        messages
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.type === 'error') {
+      const errMsg = data.error?.message || `HTTP ${res.status}`;
+      throw new Error(`Anthropic API: ${errMsg}`);
+    }
+
+    messages.push({ role: 'assistant', content: data.content });
+
+    if (data.stop_reason !== 'tool_use') {
+      const text = (data.content || [])
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n')
+        .trim();
+      return text || '（応答が空でした）';
+    }
+
+    const toolUses = data.content.filter((b) => b.type === 'tool_use');
+    const toolResults = [];
+    for (const tu of toolUses) {
+      console.log(`[AKA-1] tool=${tu.name} input=${JSON.stringify(tu.input)}`);
+      try {
+        const result = await executeAka1Tool(tu.name, tu.input);
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          content: JSON.stringify(result)
+        });
+      } catch (e) {
+        console.error(`[AKA-1] tool error: ${e.message}`);
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          content: `Error: ${e.message}`,
+          is_error: true
+        });
+      }
+    }
+    messages.push({ role: 'user', content: toolResults });
+  }
+  return 'tool 呼び出し回数の上限に達しました。質問を簡素化してもう一度お試しください。';
 }
 
 // ===== BigQueryクエリヘルパー =====
@@ -327,7 +557,7 @@ async function handleBotCommand(chatId, text) {
   const cmd = text.split(' ')[0].toLowerCase().replace('@magi_claw_bot', '');
 
   if (cmd === '/help' || cmd === '/start') {
-    return sendTelegram(`[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/help    - このメッセージ`);
+    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / Claude Haiku) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
   }
 
   if (cmd === '/status') {
@@ -403,15 +633,53 @@ async function handleBotCommand(chatId, text) {
   return sendTelegram(`[MAGI] 不明なコマンド: ${cmd}\n/help でコマンド一覧を確認してください`);
 }
 
+// ===== AKA-1 自然言語ハンドラー =====
+async function handleAka1Chat(chatId, text) {
+  await sendTypingAction(chatId);
+  console.log(`[AKA-1] chat=${chatId} text="${text}"`);
+  try {
+    const answer = await callHaikuWithTools(text);
+    await sendTelegramTo(chatId, answer, { parseMode: 'Markdown' });
+  } catch (e) {
+    console.error('[AKA-1] error:', e.message);
+    await sendTelegramTo(chatId, `[AKA-1 エラー] ${e.message}`);
+  }
+}
+
 // Telegram Webhook
+// - slash コマンド (/help, /status, /wr, /jobs, /today) は従来の handleBotCommand
+// - それ以外の自然文は AKA-1 (Claude Haiku + tool calling) に渡す
+// - 認可: TELEGRAM_CHAT_ID と一致する chat 以外は無視 (誤爆・乱用防止)
 app.post('/webhook/telegram', async (req, res) => {
   res.status(200).send('OK');
   try {
     const update = req.body;
     const message = update.message || update.edited_message;
-    if (!message || !message.text || !message.text.startsWith('/')) return;
-    console.log(`[BOT] Command: ${message.text}`);
-    await handleBotCommand(message.chat.id.toString(), message.text);
+    if (!message || !message.text) return;
+
+    const chatId = message.chat.id.toString();
+    if (TELEGRAM_CHAT_ID && chatId !== TELEGRAM_CHAT_ID) {
+      console.log(`[BOT] Ignoring chat ${chatId} (not authorized)`);
+      return;
+    }
+
+    // @magi_claw_bot メンションを除去
+    const text = message.text.replace(/@magi_claw_bot/gi, '').trim();
+    if (!text) return;
+
+    if (text.startsWith('/')) {
+      console.log(`[BOT] Command: ${text}`);
+      await handleBotCommand(chatId, text);
+      return;
+    }
+
+    if (!ANTHROPIC_API_KEY) {
+      console.log('[BOT] Natural language received but ANTHROPIC_API_KEY not set, ignoring');
+      await sendTelegramTo(chatId, '[AKA-1] 未設定のため自然言語応答は無効です。/help で利用可能なコマンドを確認してください。');
+      return;
+    }
+
+    await handleAka1Chat(chatId, text);
   } catch (e) { console.error('[BOT] Webhook error:', e.message); }
 });
 

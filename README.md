@@ -61,6 +61,34 @@ magi-moni/
 - **Email**: devops@example.com
 - **Slack**: #magi-alerts, #magi-critical
 - **SMS**: CRITICAL アラートのみ (オプション)
+- **Telegram**: `@magi_claw_bot` 経由 (`POST /webhook/telegram`)
+
+## 🤖 Telegram bot エージェント
+
+Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受け付ける:
+
+1. **Slash コマンド** (`/status` `/wr` `/jobs` `/today` `/help`)
+   - 固定 BigQuery クエリを叩いて整形済みテキストを返す（従来機能）
+
+2. **自然文** → **AKA-1 (Claude 3.5 Haiku) + tool calling**
+   - 認可: `TELEGRAM_CHAT_ID` と一致する chat のみ応答
+   - 利用ツール (読み取り専用):
+     - `get_today_trades` — 本日の取引一覧
+     - `get_winrate_by_llm` — LLM × 方向別勝率（過去 N 日）
+     - `get_daily_summary` — 指定日のサマリー
+     - `get_l4_probation` — L4 プロベーション状態
+   - 任意 SQL は意図的に未公開（事前定義クエリのみ）
+   - 仕様参照: [`dogmaai/magi-stg`](https://github.com/dogmaai/magi-stg) の `MEMORY.md` / `specifications/system/overview.md`
+
+### 必要な環境変数
+
+| 名前 | 用途 |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot 認証 |
+| `TELEGRAM_CHAT_ID` | 応答先・認可元の Telegram chat ID |
+| `ANTHROPIC_API_KEY` | AKA-1 自然文応答に必須（未設定なら自然文は無効化、slash コマンドのみ動作） |
+| `PROJECT_ID` | GCP project (default: `screen-share-459802`) |
+| `AKA1_MODEL` | 任意。デフォルト `claude-3-5-haiku-20241022` |
 
 ## 📈 SLA 目標
 
