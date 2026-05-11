@@ -32,6 +32,9 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy to Cloud Run
+        # --update-secrets を使うことで既存の secret マウント (例: 手動設定済みの
+        # TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID) を保持しつつ ANTHROPIC_API_KEY
+        # を追加できる。--set-secrets は全リセットなので使わない。
         run: |
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --region=${{ env.REGION }} \
@@ -40,4 +43,5 @@ jobs:
             --memory=512Mi \
             --timeout=300 \
             --no-allow-unauthenticated \
-            --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}"
+            --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
+            --update-secrets="ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
