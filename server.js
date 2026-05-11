@@ -16,6 +16,13 @@ const bq = new BigQuery({ projectId: PROJECT_ID });
 // 取引結果の履歴を保存（既存機能）
 const tradeResults = [];
 
+// LLM API 死活 state。外部ポーラーから setLlmHealth() 等で更新される想定（未実装なら空のまま）。
+// /status コマンドが Object.entries() でそのまま読めるようプレーンオブジェクトとして定義。
+const llmHealthState = {};
+
+// Cloud Run Jobs 状態 state。同上。/jobs コマンドが空のとき「取得中...」と表示するフォールバックを持つ。
+const jobsState = {};
+
 // ===== Telegram送信ヘルパー =====
 async function sendTelegram(message) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
@@ -250,6 +257,94 @@ async function generateWeeklyReport() {
   }
 
   return { message: msg, data: { trend, llmPerf, patterns } };
+}
+
+// ===== /status /wr /jobs ハンドラ用 BigQuery クエリ =====
+//
+// これらは commit 67f131b 以来 handleBotCommand から参照されているが、
+// ファイル内に未定義のままだった（呼び出すと ReferenceError で /status /wr が壊れる既知のバグ）。
+// trades_active テーブルの result 列 ('WIN' / 'LOSE' / その他 = HOLD 扱い) を集計する。
+
+async function queryTodaySummary() {
+  const query = `
+    SELECT
+      COUNTIF(result = 'WIN') AS wins,
+      COUNTIF(result = 'LOSE') AS loses,
+      COUNTIF(result NOT IN ('WIN', 'LOSE') OR result IS NULL) AS holds
+    FROM \`${PROJECT_ID}.magi_core.trades_active\`
+    WHERE DATE(timestamp, 'America/New_York') = CURRENT_DATE('America/New_York')
+  `;
+  const rows = await runQuery(query).catch((e) => {
+    console.error('[MONI] queryTodaySummary error:', e.message);
+    return [];
+  });
+  const r = rows[0] || {};
+  return {
+    wins: Number(r.wins || 0),
+    loses: Number(r.loses || 0),
+    holds: Number(r.holds || 0)
+  };
+}
+
+async function queryOverallStats() {
+  const query = `
+    SELECT
+      COUNTIF(result = 'WIN') AS total_wins,
+      COUNTIF(result = 'LOSE') AS total_loses,
+      ROUND(
+        COUNTIF(result = 'WIN')
+          / NULLIF(COUNTIF(result IN ('WIN','LOSE')), 0) * 100,
+        1
+      ) AS overall_wr
+    FROM \`${PROJECT_ID}.magi_core.trades_active\`
+    WHERE result IN ('WIN', 'LOSE')
+  `;
+  const rows = await runQuery(query).catch((e) => {
+    console.error('[MONI] queryOverallStats error:', e.message);
+    return [];
+  });
+  const r = rows[0] || {};
+  return {
+    total_wins: Number(r.total_wins || 0),
+    total_loses: Number(r.total_loses || 0),
+    overall_wr: r.overall_wr ?? null
+  };
+}
+
+// /wr コマンド用: LLM × 方向別 (BUY/SELL) の勝率テーブル。
+// デフォルトで過去 30 日間の集計（L4 プロベーションの閾値評価と整合しやすい期間）。
+async function queryTradeMetrics({ days = 30 } = {}) {
+  const query = `
+    SELECT
+      llm_provider,
+      side,
+      COUNTIF(result = 'WIN') AS wins,
+      COUNTIF(result = 'LOSE') AS loses,
+      ROUND(
+        COUNTIF(result = 'WIN')
+          / NULLIF(COUNTIF(result IN ('WIN','LOSE')), 0) * 100,
+        1
+      ) AS win_rate
+    FROM \`${PROJECT_ID}.magi_core.trades_active\`
+    WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
+      AND result IN ('WIN', 'LOSE')
+      AND llm_provider IS NOT NULL
+      AND side IS NOT NULL
+    GROUP BY llm_provider, side
+    HAVING wins + loses >= 1
+    ORDER BY llm_provider, side
+  `;
+  const rows = await runQuery(query, { days }, { days: 'INT64' }).catch((e) => {
+    console.error('[MONI] queryTradeMetrics error:', e.message);
+    return [];
+  });
+  return rows.map((r) => ({
+    llm_provider: r.llm_provider,
+    side: r.side,
+    wins: Number(r.wins || 0),
+    loses: Number(r.loses || 0),
+    win_rate: r.win_rate ?? null
+  }));
 }
 
 // ===== ヘルスチェック =====
