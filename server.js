@@ -1,6 +1,7 @@
 const express = require('express');
 const { BigQuery } = require('@google-cloud/bigquery');
 const https = require('https');
+const { GoogleAuth } = require('google-auth-library');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -15,6 +16,47 @@ const AKA1_MAX_TOOL_ITERATIONS = 5;
 app.use(express.json());
 
 const bq = new BigQuery({ projectId: PROJECT_ID });
+
+// ===== magi-moomoo Cloud Run proxy =====
+let _moomooIdTokenClient = null;
+
+async function getMoomooUrl() {
+  const [rows] = await bq.query({
+    query: `SELECT url FROM \`${PROJECT_ID}.magi_core.service_endpoints\`
+            WHERE service = 'magi-moomoo'
+            ORDER BY updated_at DESC LIMIT 1`,
+    location: 'US'
+  });
+  if (!rows || rows.length === 0) throw new Error('magi-moomoo URL not found in service_endpoints');
+  return rows[0].url;
+}
+
+async function getMoomooIdToken(targetUrl) {
+  if (!_moomooIdTokenClient) {
+    const auth = new GoogleAuth();
+    _moomooIdTokenClient = await auth.getIdTokenClient(targetUrl);
+  }
+  const headers = await _moomooIdTokenClient.getRequestHeaders();
+  return typeof headers.get === 'function'
+    ? headers.get('Authorization')
+    : headers.Authorization;
+}
+
+async function callMoomoo(path, options = {}) {
+  const baseUrl = await getMoomooUrl();
+  const authHeader = await getMoomooIdToken(baseUrl);
+  const url = `${baseUrl}${path}`;
+  const res = await fetch(url, {
+    ...options,
+    headers: { ...options.headers, 'Authorization': authHeader },
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`moomoo HTTP ${res.status}: ${errBody}`);
+  }
+  return res.json();
+}
 
 // 取引結果の履歴を保存（既存機能）
 const tradeResults = [];
@@ -134,6 +176,62 @@ const AKA1_TOOLS = [
     description:
       '現在 L4 プロベーション中の LLM × 方向と経過時間を返す。空配列ならブロック無し。',
     input_schema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'moomoo_account_info',
+    description:
+      'MooMooペーパー取引口座の残高・資産情報を取得する。total_assets / cash / market_value / pnl 等を返す。',
+    input_schema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'moomoo_positions',
+    description:
+      'MooMooペーパー取引口座の保有ポジション一覧を取得する。各行: symbol / qty / cost_price / market_value / pnl 等。',
+    input_schema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'moomoo_quote',
+    description:
+      '指定シンボルの現在気配値を取得する。last_price / bid / ask / volume 等を返す。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        symbol: {
+          type: 'string',
+          description: '銘柄シンボル (例: AAPL, TSLA, NVDA)'
+        }
+      },
+      required: ['symbol']
+    }
+  },
+  {
+    name: 'moomoo_place_order',
+    description:
+      'MooMooペーパー取引口座で成行注文を発注する。SIMULATEモードのみ（本番取引不可）。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        symbol: {
+          type: 'string',
+          description: '銘柄シンボル (例: AAPL)'
+        },
+        side: {
+          type: 'string',
+          description: '売買方向: BUY または SELL'
+        },
+        qty: {
+          type: 'integer',
+          description: '注文数量'
+        }
+      },
+      required: ['symbol', 'side', 'qty']
+    }
+  },
+  {
+    name: 'moomoo_connectivity',
+    description:
+      'MooMoo接続チェーン全体の疎通確認。proxy → bridge → OpenD の各ステップの状態を返す。',
+    input_schema: { type: 'object', properties: {} }
   }
 ];
 
@@ -205,11 +303,49 @@ async function akaTool_getL4Probation() {
   return { count: rows.length, rows };
 }
 
+async function akaTool_moomooAccountInfo() {
+  return callMoomoo('/trade/account_info');
+}
+
+async function akaTool_moomooPositions() {
+  return callMoomoo('/trade/positions');
+}
+
+async function akaTool_moomooQuote({ symbol }) {
+  if (!symbol) throw new Error('symbol は必須です');
+  return callMoomoo(`/trade/quote?symbol=${encodeURIComponent(symbol)}`);
+}
+
+async function akaTool_moomooPlaceOrder({ symbol, side, qty }) {
+  if (!symbol || !side || !qty) throw new Error('symbol, side, qty は必須です');
+  return callMoomoo('/trade/place_order', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol,
+      side: side.toUpperCase(),
+      qty: Number(qty),
+      price: 0,
+      order_type: 'MARKET',
+      remark: 'AKA-1 Telegram'
+    })
+  });
+}
+
+async function akaTool_moomooConnectivity() {
+  return callMoomoo('/connectivity');
+}
+
 const AKA1_TOOL_HANDLERS = {
   get_today_trades: akaTool_getTodayTrades,
   get_winrate_by_llm: akaTool_getWinrateByLlm,
   get_daily_summary: akaTool_getDailySummary,
-  get_l4_probation: akaTool_getL4Probation
+  get_l4_probation: akaTool_getL4Probation,
+  moomoo_account_info: akaTool_moomooAccountInfo,
+  moomoo_positions: akaTool_moomooPositions,
+  moomoo_quote: akaTool_moomooQuote,
+  moomoo_place_order: akaTool_moomooPlaceOrder,
+  moomoo_connectivity: akaTool_moomooConnectivity
 };
 
 async function executeAka1Tool(name, input) {
@@ -227,7 +363,10 @@ async function callHaikuWithTools(userMessage) {
     '日本語で簡潔に応答してください。' +
     '取引・勝率・P&L・L4 プロベーション等のデータは必ず提供された tool を使って取得し、推測で答えないこと。' +
     '勝率や金額には具体的な数値と件数 (n) を付記してください。' +
-    'Telegram 宛のため、絵文字や箇条書きは控えめに、HTML タグは使わずプレーンテキストで返してください。';
+    'Telegram 宛のため、絵文字や箇条書きは控えめに、HTML タグは使わずプレーンテキストで返してください。' +
+    '\n\nMooMooペーパー取引機能も利用可能です。moomoo_* ツールで口座残高・ポジション・気配値の確認、' +
+    '成行注文の発注ができます。全て SIMULATE（デモ）環境のみで、本番取引は行われません。' +
+    '発注時は必ずユーザーの指示を確認し、symbol / side / qty を明示してから実行してください。';
 
   const messages = [{ role: 'user', content: userMessage }];
 
