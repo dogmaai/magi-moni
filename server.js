@@ -232,6 +232,20 @@ const AKA1_TOOLS = [
     description:
       'MooMoo接続チェーン全体の疎通確認。proxy → bridge → OpenD の各ステップの状態を返す。',
     input_schema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'get_constitution',
+    description:
+      'MAGI Constitution（最上位ルール）を BigQuery から取得する。セクション名を指定すると該当セクションのみ返す。省略時は全文を返す。',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section: {
+          type: 'string',
+          description: 'セクション名（例: NORTH STAR, CORE PRINCIPLES, FORBIDDEN ACTIONS）。省略時は全文'
+        }
+      }
+    }
   }
 ];
 
@@ -336,6 +350,48 @@ async function akaTool_moomooConnectivity() {
   return callMoomoo('/connectivity');
 }
 
+async function akaTool_getConstitution({ section }) {
+  const query = `
+    SELECT version, content, sha256, effective_date, section_index
+    FROM \`${PROJECT_ID}.magi_core.constitution\`
+    WHERE deprecated_at IS NULL
+    ORDER BY effective_date DESC
+    LIMIT 1
+  `;
+  const rows = await runQuery(query);
+  if (!rows.length) return { error: 'Constitution not found' };
+  const row = rows[0];
+  if (!section) {
+    return {
+      version: row.version,
+      sha256: row.sha256,
+      effective_date: row.effective_date?.value || row.effective_date,
+      content: row.content
+    };
+  }
+  const lines = row.content.split('\n');
+  const sectionHeader = lines.findIndex(l =>
+    l.startsWith('## ') && l.toLowerCase().includes(section.toLowerCase())
+  );
+  if (sectionHeader === -1) {
+    const sections = JSON.parse(row.section_index || '[]');
+    return { error: `Section "${section}" not found`, available_sections: sections };
+  }
+  const nextHeader = lines.findIndex(
+    (l, i) => i > sectionHeader && l.startsWith('## ')
+  );
+  const sectionContent = lines
+    .slice(sectionHeader, nextHeader === -1 ? undefined : nextHeader)
+    .join('\n')
+    .trim();
+  return {
+    version: row.version,
+    sha256: row.sha256,
+    section: lines[sectionHeader].replace(/^## /, ''),
+    content: sectionContent
+  };
+}
+
 const AKA1_TOOL_HANDLERS = {
   get_today_trades: akaTool_getTodayTrades,
   get_winrate_by_llm: akaTool_getWinrateByLlm,
@@ -345,7 +401,8 @@ const AKA1_TOOL_HANDLERS = {
   moomoo_positions: akaTool_moomooPositions,
   moomoo_quote: akaTool_moomooQuote,
   moomoo_place_order: akaTool_moomooPlaceOrder,
-  moomoo_connectivity: akaTool_moomooConnectivity
+  moomoo_connectivity: akaTool_moomooConnectivity,
+  get_constitution: akaTool_getConstitution
 };
 
 async function executeAka1Tool(name, input) {
@@ -362,6 +419,8 @@ async function callHaikuWithTools(userMessage) {
     'あなたは MAGI トレーディングシステムの監視 bot 「AKA-1」(Claude 3.5 Haiku) です。' +
     '日本語で簡潔に応答してください。' +
     '取引・勝率・P&L・L4 プロベーション等のデータは必ず提供された tool を使って取得し、推測で答えないこと。' +
+    'MAGI Constitution（憲法）は最上位ルールです。get_constitution ツールで取得できます。' +
+    '憲法に関する質問には必ずツールで原文を取得してから回答してください。' +
     '勝率や金額には具体的な数値と件数 (n) を付記してください。' +
     'Telegram 宛のため、絵文字や箇条書きは控えめに、HTML タグは使わずプレーンテキストで返してください。' +
     '\n\nMooMooペーパー取引機能も利用可能です。moomoo_* ツールで口座残高・ポジション・気配値の確認、' +
