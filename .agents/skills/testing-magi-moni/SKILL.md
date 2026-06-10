@@ -13,6 +13,39 @@ magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 - Gemini fallback when Claude is unavailable (non-sticky: always tries Claude first)
 - Pub/Sub endpoint for trade result ingestion
 
+## Claude Fable 5 — Mythos-class Model (超高額注意)
+
+AKA-1 のデフォルト LLM は `claude-fable-5` で、Anthropic の最上位クラス「Mythos」に属する。
+
+### 料金比較 (2026年6月時点)
+
+| モデル | クラス | Input $/MTok | Output $/MTok | 備考 |
+|---|---|---|---|---|
+| **Claude Fable 5** | **Mythos** | **$10** | **$50** | AKA-1 デフォルト。最高性能・最高額 |
+| Claude Opus 4.8 | Opus | $5 | $25 | Fable の半額。セーフガード発動時のフォールバック先 |
+| Claude Sonnet 4.6 | Sonnet | $3 | $15 | バランス型 |
+| Claude Haiku 4.5 | Haiku | $1 | $5 | 最安。Fable の1/10 |
+| Gemini 2.5 Flash | — | 低コスト | 低コスト | AKA-1 の Claude 失敗時フォールバック |
+
+### Fable 5 の機能・特性
+
+- **Fable 5 = Mythos 5 と同じ基盤モデル** + 安全ガードレール（サイバーセキュリティ/バイオ領域は Opus 4.8 にフォールバック）
+- 長時間・複雑タスクほど他モデルとの差が拡大（短い質問では差が少ない）
+- SWE-Bench Pro 80.3%（+11pt）、FrontierCode 全モデルトップ
+- 金融分析: Hebbia Finance Benchmark 最高スコア、IMC トレーディング分析評価ほぼ全項目トップ
+- Vision SOTA、1M トークンコンテキスト
+- トークン効率が高く、少ないターンでタスク完了 → 単価2倍でも実コストは近づく場合あり
+- Prompt caching で input 90% 割引可能
+
+### コスト管理の注意
+
+- **Fable はチャット応答専用** — ユーザーが AKA-1 に自然言語で話しかけた時だけ課金
+- スラッシュコマンド (`/status`, `/wr`, `/jobs`, `/today`, `/llm`, `/help`) は Claude を呼ばない
+- Cloud Scheduler 定期実行 (`/report/daily`, `/report/weekly`) でも Fable を呼ばない
+- 他の Cloud Run サービス/ジョブ (magi-core, magi-stg, magi-ac 等) では Fable 未使用
+- **テスト時に実 ANTHROPIC_API_KEY で自然言語チャットを何度も送ると課金が発生するため注意**
+- `AKA1_MODEL` を変更する際は料金差を必ず確認すること
+
 ## Environment Setup
 
 ```bash
@@ -116,6 +149,14 @@ When testing model/LLM config changes:
 3. Verify natural language path attempts the correct model via server logs
 4. Check function names and comments are consistent with model name
 
+## Telegram Webhook Gotchas
+
+- Telegram `getUpdates` (polling mode) が active だと webhook URL が自動削除される
+- TIALA 等で `bot.js` などのポーリングプロセスが動いていないか確認すること
+- Webhook 登録後は `getWebhookInfo` で URL が残っているか確認
+- `/setup/webhook` は OIDC 認証が必要 — Cloud Shell のユーザートークンでは認証失敗する場合がある。Telegram API を直接呼ぶか、サービスアカウントトークンを使用
+- `setMyCommands` はキャッシュされるため、Telegram アプリの再起動が必要な場合がある
+
 ## Deployment
 
 magi-moni is deployed as a Cloud Run **service** (not job):
@@ -128,5 +169,5 @@ Deploy is done by Jun manually via Cloud Shell after PR merge.
 ## Devin Secrets Needed
 
 - `GCP_SERVICE_ACCOUNT_KEY` — GCP service account key for BigQuery access (available as org secret)
-- `ANTHROPIC_API_KEY` — Only needed if testing the full AKA-1 LLM loop (not needed for individual tool testing or webhook simulation)
+- `ANTHROPIC_API_KEY` — Only needed if testing the full AKA-1 LLM loop (not needed for individual tool testing or webhook simulation). **注意: Fable 5 は超高額 ($10/$50 per MTok) のため、テスト回数を最小限に**
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Only needed for live Telegram testing
