@@ -10,7 +10,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const AKA1_MODEL = process.env.AKA1_MODEL || 'claude-3-5-haiku-20241022';
+const AKA1_MODEL = process.env.AKA1_MODEL || 'claude-fable-5';
 const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
 const AKA1_MAX_TOOL_ITERATIONS = 5;
 
@@ -121,7 +121,7 @@ async function sendTypingAction(chatId) {
   } catch (_) { /* ignore typing failures */ }
 }
 
-// ===== AKA-1 (Claude Haiku) - 自然言語 Telegram チャット =====
+// ===== AKA-1 (Claude Fable) - 自然言語 Telegram チャット =====
 //
 // 仕様参照: dogmaai/magi-stg/MEMORY.md, specifications/system/overview.md
 // 役割: Telegram で自然文を受け、tool calling で BigQuery を直接照会して応答する。
@@ -495,12 +495,12 @@ async function callGeminiWithTools(userMessage) {
   return 'tool 呼び出し回数の上限に達しました。質問を簡素化してもう一度お試しください。';
 }
 
-async function callHaikuWithTools(userMessage) {
+async function callClaudeWithTools(userMessage) {
   if (!ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY が未設定です');
   }
   const systemPrompt =
-    'あなたは MAGI トレーディングシステムの監視 bot 「AKA-1」(Claude 3.5 Haiku) です。' +
+    'あなたは MAGI トレーディングシステムの監視 bot 「AKA-1」(Claude Fable 5) です。' +
     '日本語で簡潔に応答してください。' +
     '取引・勝率・P&L・L4 プロベーション等のデータは必ず提供された tool を使って取得し、推測で答えないこと。' +
     'MAGI Constitution（憲法）は最上位ルールです。get_constitution ツールで取得できます。' +
@@ -934,7 +934,7 @@ async function handleBotCommand(chatId, text) {
   const cmd = text.split(' ')[0].toLowerCase().replace('@magi_claw_bot', '');
 
   if (cmd === '/help' || cmd === '/start') {
-    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/llm     - AKA-1 の現在の LLM 設定\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / Claude Haiku) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
+    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/llm     - AKA-1 の現在の LLM 設定\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / Claude Fable) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
   }
 
   if (cmd === '/llm') {
@@ -1026,7 +1026,7 @@ async function handleAka1Chat(chatId, text) {
   let claudeError = null;
   if (ANTHROPIC_API_KEY) {
     try {
-      const answer = await callHaikuWithTools(text);
+      const answer = await callClaudeWithTools(text);
       await sendTelegramTo(chatId, answer, { parseMode: 'Markdown' });
       return;
     } catch (e) {
@@ -1059,7 +1059,7 @@ async function handleAka1Chat(chatId, text) {
 
 // Telegram Webhook
 // - slash コマンド (/help, /status, /wr, /jobs, /today) は従来の handleBotCommand
-// - それ以外の自然文は AKA-1 (Claude Haiku + tool calling) に渡す
+// - それ以外の自然文は AKA-1 (Claude Fable + tool calling) に渡す
 // - 認可: TELEGRAM_CHAT_ID と一致する chat 以外は無視 (誤爆・乱用防止)
 app.post('/webhook/telegram', async (req, res) => {
   res.status(200).send('OK');
