@@ -43,5 +43,5 @@ jobs:
             --memory=512Mi \
             --timeout=300 \
             --no-allow-unauthenticated \
-            --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
+            --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},AKA1_MODEL=claude-fable-5" \
             --update-secrets="ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest"
