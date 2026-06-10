@@ -490,7 +490,7 @@ async function callGeminiWithTools(userMessage) {
         });
       }
     }
-    contents.push({ role: 'user', parts: fnResponses });
+    contents.push({ role: 'function', parts: fnResponses });
   }
   return 'tool 呼び出し回数の上限に達しました。質問を簡素化してもう一度お試しください。';
 }
@@ -1023,13 +1023,15 @@ async function handleAka1Chat(chatId, text) {
   console.log(`[AKA-1] chat=${chatId} text="${text}"`);
 
   // Try Claude (primary)
+  let claudeError = null;
   if (ANTHROPIC_API_KEY) {
     try {
       const answer = await callHaikuWithTools(text);
       await sendTelegramTo(chatId, answer, { parseMode: 'Markdown' });
       return;
     } catch (e) {
-      console.error('[AKA-1] Claude error, trying Gemini fallback:', e.message);
+      claudeError = e.message;
+      console.error('[AKA-1] Claude error, trying Gemini fallback:', claudeError);
     }
   } else {
     console.log('[AKA-1] ANTHROPIC_API_KEY not set, using Gemini fallback');
@@ -1048,7 +1050,11 @@ async function handleAka1Chat(chatId, text) {
     }
   }
 
-  await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定です。ANTHROPIC_API_KEY または GEMINI_API_KEY を設定してください。');
+  if (claudeError) {
+    await sendTelegramTo(chatId, `[AKA-1 エラー] Claude 失敗: ${claudeError}。Gemini フォールバックは未設定です。`);
+  } else {
+    await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定です。ANTHROPIC_API_KEY または GEMINI_API_KEY を設定してください。');
+  }
 }
 
 // Telegram Webhook
