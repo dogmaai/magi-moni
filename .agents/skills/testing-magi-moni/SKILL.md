@@ -9,7 +9,8 @@ description: Test AKA-1 Telegram bot tools locally against real BigQuery and Moo
 
 magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 - Telegram bot webhook for slash commands and natural language chat (AKA-1)
-- AKA-1 uses Claude 3.5 Haiku with tool calling to query BigQuery and MooMoo
+- AKA-1 uses Claude Fable 5 (default, configurable via `AKA1_MODEL` env var) with tool calling to query BigQuery and MooMoo
+- Gemini fallback when Claude is unavailable (non-sticky: always tries Claude first)
 - Pub/Sub endpoint for trade result ingestion
 
 ## Environment Setup
@@ -37,6 +38,33 @@ const { BigQuery } = require('@google-cloud/bigquery');
 ```
 
 Note: magi-moni uses CommonJS (`require`), but when running inline scripts with `--input-type=module`, use `createRequire` to load CJS packages.
+
+### Webhook Simulation Testing (Model Config / LLM Path)
+
+To verify model configuration changes or LLM routing without needing real API keys:
+
+```bash
+# Start server with dummy keys
+PORT=8090 ANTHROPIC_API_KEY=dummy_test_key TELEGRAM_CHAT_ID=12345 \
+  TELEGRAM_BOT_TOKEN=dummy_bot_token \
+  GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcp-key.json \
+  node server.js
+
+# Test /llm command — verify model name in output
+curl -s -X POST http://localhost:8090/webhook/telegram \
+  -H 'Content-Type: application/json' \
+  -d '{"message":{"chat":{"id":12345},"text":"/llm"}}'
+# Server log should show: [BOT] Command: /llm
+
+# Test natural language — verify Claude path is attempted
+curl -s -X POST http://localhost:8090/webhook/telegram \
+  -H 'Content-Type: application/json' \
+  -d '{"message":{"chat":{"id":12345},"text":"今日の取引は？"}}'
+# Server log should show the Anthropic API call attempt with the configured model
+# Expected: "invalid x-api-key" error (dummy key), confirming Claude path was taken
+```
+
+Telegram message content won't be visible with dummy bot tokens (status 404). Verify message text via source code analysis or temporary `console.log` instrumentation.
 
 ### BigQuery Tools
 
@@ -82,6 +110,12 @@ When testing MooMoo tools:
 2. All trades are SIMULATE mode — never real money
 3. Bridge may be offline (TIALA local machine) — test error handling path too
 
+When testing model/LLM config changes:
+1. Verify `/llm` command output shows correct model ID
+2. Verify `/help` text references correct model name
+3. Verify natural language path attempts the correct model via server logs
+4. Check function names and comments are consistent with model name
+
 ## Deployment
 
 magi-moni is deployed as a Cloud Run **service** (not job):
@@ -93,6 +127,6 @@ Deploy is done by Jun manually via Cloud Shell after PR merge.
 
 ## Devin Secrets Needed
 
-- `GOOGLE_APPLICATION_CREDENTIALS` — GCP service account key for BigQuery access
-- `ANTHROPIC_API_KEY` — Only needed if testing the full AKA-1 LLM loop (not needed for individual tool testing)
+- `GCP_SERVICE_ACCOUNT_KEY` — GCP service account key for BigQuery access (available as org secret)
+- `ANTHROPIC_API_KEY` — Only needed if testing the full AKA-1 LLM loop (not needed for individual tool testing or webhook simulation)
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Only needed for live Telegram testing
