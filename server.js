@@ -1,7 +1,8 @@
 const express = require('express');
 const { BigQuery } = require('@google-cloud/bigquery');
 const https = require('https');
-const { GoogleAuth } = require('google-auth-library');
+const crypto = require('crypto');
+const { GoogleAuth, OAuth2Client } = require('google-auth-library');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -13,6 +14,30 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const AKA1_MODEL = process.env.AKA1_MODEL || 'claude-fable-5';
 const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
 const AKA1_MAX_TOOL_ITERATIONS = 5;
+
+// Telegram webhook secret: derived from bot token to prevent spoofed webhook calls
+const WEBHOOK_SECRET = TELEGRAM_BOT_TOKEN
+  ? crypto.createHash('sha256').update(TELEGRAM_BOT_TOKEN).digest('hex').slice(0, 32)
+  : null;
+
+// OIDC token verifier for internal endpoints (Cloud Scheduler, Pub/Sub)
+const oidcClient = new OAuth2Client();
+const SERVICE_URL = process.env.K_SERVICE
+  ? `https://${process.env.K_SERVICE}-398890937507.asia-northeast1.run.app`
+  : null;
+
+async function verifyInternalRequest(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return false;
+  if (!SERVICE_URL) return true; // skip verification in local dev
+  try {
+    const token = authHeader.split(' ')[1];
+    const ticket = await oidcClient.verifyIdToken({ idToken: token, audience: SERVICE_URL });
+    return !!ticket;
+  } catch {
+    return false;
+  }
+}
 
 app.use(express.json());
 
@@ -879,7 +904,10 @@ app.get('/health', (req, res) => {
 });
 
 // ===== Pub/Sub エンドポイント（既存機能） =====
-app.post('/pubsub/trade-result', (req, res) => {
+app.post('/pubsub/trade-result', async (req, res) => {
+  if (!(await verifyInternalRequest(req))) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
   try {
     const message = req.body.message;
     if (!message || !message.data) {
@@ -908,6 +936,9 @@ app.get('/results', (req, res) => {
 // ===== 日次レポート（Phase 4）=====
 // Cloud Schedulerから毎日22:00 UTCに叩かれる
 app.post('/report/daily', async (req, res) => {
+  if (!(await verifyInternalRequest(req))) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
   console.log('[MONI] Generating daily report...');
   try {
     const { message, data } = await generateDailyReport();
@@ -923,6 +954,9 @@ app.post('/report/daily', async (req, res) => {
 // ===== 週次レポート（Phase 4）=====
 // Cloud Schedulerから毎週月曜00:00 UTCに叩かれる
 app.post('/report/weekly', async (req, res) => {
+  if (!(await verifyInternalRequest(req))) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
   console.log('[MONI] Generating weekly report...');
   try {
     const { message, data } = await generateWeeklyReport();
@@ -1071,6 +1105,14 @@ async function handleAka1Chat(chatId, text) {
 // - それ以外の自然文は AKA-1 (Claude Fable + tool calling) に渡す
 // - 認可: TELEGRAM_CHAT_ID と一致する chat 以外は無視 (誤爆・乱用防止)
 app.post('/webhook/telegram', async (req, res) => {
+  // Verify Telegram secret_token header to prevent spoofed webhook calls
+  if (WEBHOOK_SECRET) {
+    const headerSecret = req.headers['x-telegram-bot-api-secret-token'];
+    if (headerSecret !== WEBHOOK_SECRET) {
+      console.log('[BOT] Rejected webhook: invalid secret token');
+      return res.status(403).send('Forbidden');
+    }
+  }
   res.status(200).send('OK');
   try {
     const update = req.body;
@@ -1105,12 +1147,15 @@ app.post('/webhook/telegram', async (req, res) => {
 
 // Webhook登録
 app.post('/setup/webhook', async (req, res) => {
+  if (!(await verifyInternalRequest(req))) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
   try {
     const webhookUrl = `https://magi-moni-398890937507.asia-northeast1.run.app/webhook/telegram`;
     const result = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: webhookUrl }),
+      body: JSON.stringify({ url: webhookUrl, secret_token: WEBHOOK_SECRET }),
     });
     const data = await result.json();
     res.json({ webhookUrl, result: data });
