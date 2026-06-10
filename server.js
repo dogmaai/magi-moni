@@ -69,6 +69,9 @@ const llmHealthState = {};
 // Cloud Run Jobs 状態 state。同上。/jobs コマンドが空のとき「取得中...」と表示するフォールバックを持つ。
 const jobsState = {};
 
+// AKA-1 が最後に使用した実モデル名（Anthropic API レスポンスの model フィールド）
+let aka1LastResponseModel = null;
+
 // ===== Telegram送信ヘルパー =====
 async function sendTelegramTo(chatId, message, { parseMode = 'HTML' } = {}) {
   if (!TELEGRAM_BOT_TOKEN || !chatId) {
@@ -535,6 +538,11 @@ async function callClaudeWithTools(userMessage) {
       throw new Error(`Anthropic API: ${errMsg}`);
     }
 
+    if (data.model) {
+      aka1LastResponseModel = data.model;
+      console.log(`[AKA-1] API response model: ${data.model}`);
+    }
+
     messages.push({ role: 'assistant', content: data.content });
 
     if (data.stop_reason !== 'tool_use') {
@@ -940,7 +948,8 @@ async function handleBotCommand(chatId, text) {
   if (cmd === '/llm') {
     const claude = ANTHROPIC_API_KEY ? `✓ ${AKA1_MODEL}` : '✗ ANTHROPIC_API_KEY 未設定';
     const gemini = GEMINI_API_KEY ? `✓ ${GEMINI_FALLBACK_MODEL}` : '✗ GEMINI_API_KEY 未設定';
-    return sendTelegramTo(chatId, `[AKA-1] LLM 設定\n\nPrimary: Claude — ${claude}\nFallback: Gemini — ${gemini}\n\n※ Claude を常に優先。Claude 失敗時のみ Gemini にフォールバック。`);
+    const actual = aka1LastResponseModel ? `\n実モデル (API確認): ${aka1LastResponseModel}` : '\n実モデル: まだ応答なし（自然文を送ると記録されます）';
+    return sendTelegramTo(chatId, `[AKA-1] LLM 設定\n\nPrimary: Claude — ${claude}\nFallback: Gemini — ${gemini}${actual}\n\n※ Claude を常に優先。Claude 失敗時のみ Gemini にフォールバック。`);
   }
 
   if (cmd === '/status') {
