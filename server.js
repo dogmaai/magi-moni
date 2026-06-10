@@ -528,7 +528,8 @@ async function callClaudeWithTools(userMessage) {
     throw new Error('ANTHROPIC_API_KEY が未設定です');
   }
   const systemPrompt =
-    'あなたは MAGI トレーディングシステムの監視 bot 「AKA-1」(Claude Fable 5) です。' +
+    `あなたは MAGI トレーディングシステムの監視 bot「AKA-1」です。モデル: ${AKA1_MODEL}。` +
+    'あなたは Anthropic の Claude です。Gemini ではありません。モデル名を聞かれたら上記を正確に答えてください。' +
     '日本語で簡潔に応答してください。' +
     '取引・勝率・P&L・L4 プロベーション等のデータは必ず提供された tool を使って取得し、推測で答えないこと。' +
     'MAGI Constitution（憲法）は最上位ルールです。get_constitution ツールで取得できます。' +
@@ -976,7 +977,7 @@ async function handleBotCommand(chatId, text) {
   const cmd = text.split(' ')[0].toLowerCase().replace('@magi_claw_bot', '');
 
   if (cmd === '/help' || cmd === '/start') {
-    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/llm     - AKA-1 の現在の LLM 設定\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / Claude Fable) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
+    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/llm     - AKA-1 の現在の LLM 設定\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / ${AKA1_MODEL}) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
   }
 
   if (cmd === '/llm') {
@@ -1158,6 +1159,19 @@ app.post('/setup/webhook', async (req, res) => {
       body: JSON.stringify({ url: webhookUrl, secret_token: WEBHOOK_SECRET }),
     });
     const data = await result.json();
+    // Register bot commands in Telegram menu
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands: [
+        { command: 'status', description: 'LLM API死活 + 本日サマリー' },
+        { command: 'wr', description: 'LLM x 方向別勝率テーブル' },
+        { command: 'jobs', description: 'Cloud Run Jobs状態' },
+        { command: 'today', description: '本日の取引一覧' },
+        { command: 'llm', description: 'AKA-1 の現在の LLM 設定' },
+        { command: 'help', description: 'コマンド一覧' },
+      ]}),
+    });
     res.json({ webhookUrl, result: data });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
