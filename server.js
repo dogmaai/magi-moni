@@ -11,6 +11,7 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const AKA1_MODEL = process.env.AKA1_MODEL || 'claude-3-5-haiku-20241022';
+const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
 const AKA1_MAX_TOOL_ITERATIONS = 5;
 
 app.use(express.json());
@@ -409,6 +410,89 @@ async function executeAka1Tool(name, input) {
   const handler = AKA1_TOOL_HANDLERS[name];
   if (!handler) throw new Error(`Unknown tool: ${name}`);
   return handler(input || {});
+}
+
+// Convert Anthropic tool schema to Gemini function declarations
+function toGeminiFunctionDeclarations() {
+  return AKA1_TOOLS.map(t => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.input_schema
+  }));
+}
+
+async function callGeminiWithTools(userMessage) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY が未設定です');
+  }
+  const systemPrompt =
+    'あなたは MAGI トレーディングシステムの監視 bot 「AKA-1」(Gemini fallback) です。' +
+    '日本語で簡潔に応答してください。' +
+    '取引・勝率・P&L・L4 プロベーション等のデータは必ず提供された tool を使って取得し、推測で答えないこと。' +
+    'MAGI Constitution（憲法）は最上位ルールです。get_constitution ツールで取得できます。' +
+    '憲法に関する質問には必ずツールで原文を取得してから回答してください。' +
+    '勝率や金額には具体的な数値と件数 (n) を付記してください。' +
+    'Telegram 宛のため、絵文字や箇条書きは控えめに、HTML タグは使わずプレーンテキストで返してください。' +
+    '\n\nMooMooペーパー取引機能も利用可能です。moomoo_* ツールで口座残高・ポジション・気配値の確認、' +
+    '成行注文の発注ができます。全て SIMULATE（デモ）環境のみで、本番取引は行われません。' +
+    '発注時は必ずユーザーの指示を確認し、symbol / side / qty を明示してから実行してください。';
+
+  const contents = [{ role: 'user', parts: [{ text: userMessage }] }];
+  const tools = [{ functionDeclarations: toGeminiFunctionDeclarations() }];
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_FALLBACK_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+  for (let i = 0; i < AKA1_MAX_TOOL_ITERATIONS; i++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents,
+        tools
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      const errMsg = data.error?.message || `HTTP ${res.status}`;
+      throw new Error(`Gemini API: ${errMsg}`);
+    }
+
+    const candidate = data.candidates?.[0];
+    if (!candidate?.content?.parts) {
+      return '（Gemini から応答がありませんでした）';
+    }
+
+    contents.push(candidate.content);
+
+    const fnCalls = candidate.content.parts.filter(p => p.functionCall);
+    if (fnCalls.length === 0) {
+      const text = candidate.content.parts
+        .filter(p => p.text)
+        .map(p => p.text)
+        .join('\n')
+        .trim();
+      return text || '（応答が空でした）';
+    }
+
+    const fnResponses = [];
+    for (const part of fnCalls) {
+      const { name, args } = part.functionCall;
+      console.log(`[AKA-1:GEMINI] tool=${name} input=${JSON.stringify(args)}`);
+      try {
+        const result = await executeAka1Tool(name, args);
+        fnResponses.push({
+          functionResponse: { name, response: { result } }
+        });
+      } catch (e) {
+        console.error(`[AKA-1:GEMINI] tool error: ${e.message}`);
+        fnResponses.push({
+          functionResponse: { name, response: { error: e.message } }
+        });
+      }
+    }
+    contents.push({ role: 'user', parts: fnResponses });
+  }
+  return 'tool 呼び出し回数の上限に達しました。質問を簡素化してもう一度お試しください。';
 }
 
 async function callHaikuWithTools(userMessage) {
@@ -850,7 +934,13 @@ async function handleBotCommand(chatId, text) {
   const cmd = text.split(' ')[0].toLowerCase().replace('@magi_claw_bot', '');
 
   if (cmd === '/help' || cmd === '/start') {
-    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / Claude Haiku) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
+    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/llm     - AKA-1 の現在の LLM 設定\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / Claude Haiku) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
+  }
+
+  if (cmd === '/llm') {
+    const claude = ANTHROPIC_API_KEY ? `✓ ${AKA1_MODEL}` : '✗ ANTHROPIC_API_KEY 未設定';
+    const gemini = GEMINI_API_KEY ? `✓ ${GEMINI_FALLBACK_MODEL}` : '✗ GEMINI_API_KEY 未設定';
+    return sendTelegramTo(chatId, `[AKA-1] LLM 設定\n\nPrimary: Claude — ${claude}\nFallback: Gemini — ${gemini}\n\n※ Claude を常に優先。Claude 失敗時のみ Gemini にフォールバック。`);
   }
 
   if (cmd === '/status') {
@@ -927,16 +1017,38 @@ async function handleBotCommand(chatId, text) {
 }
 
 // ===== AKA-1 自然言語ハンドラー =====
+// Claude primary → Gemini fallback (non-sticky: always tries Claude first)
 async function handleAka1Chat(chatId, text) {
   await sendTypingAction(chatId);
   console.log(`[AKA-1] chat=${chatId} text="${text}"`);
-  try {
-    const answer = await callHaikuWithTools(text);
-    await sendTelegramTo(chatId, answer, { parseMode: 'Markdown' });
-  } catch (e) {
-    console.error('[AKA-1] error:', e.message);
-    await sendTelegramTo(chatId, `[AKA-1 エラー] ${e.message}`);
+
+  // Try Claude (primary)
+  if (ANTHROPIC_API_KEY) {
+    try {
+      const answer = await callHaikuWithTools(text);
+      await sendTelegramTo(chatId, answer, { parseMode: 'Markdown' });
+      return;
+    } catch (e) {
+      console.error('[AKA-1] Claude error, trying Gemini fallback:', e.message);
+    }
+  } else {
+    console.log('[AKA-1] ANTHROPIC_API_KEY not set, using Gemini fallback');
   }
+
+  // Gemini fallback
+  if (GEMINI_API_KEY) {
+    try {
+      const answer = await callGeminiWithTools(text);
+      await sendTelegramTo(chatId, answer, { parseMode: 'Markdown' });
+      return;
+    } catch (e) {
+      console.error('[AKA-1] Gemini fallback also failed:', e.message);
+      await sendTelegramTo(chatId, `[AKA-1 エラー] Claude / Gemini 両方失敗: ${e.message}`);
+      return;
+    }
+  }
+
+  await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定です。ANTHROPIC_API_KEY または GEMINI_API_KEY を設定してください。');
 }
 
 // Telegram Webhook
@@ -966,9 +1078,9 @@ app.post('/webhook/telegram', async (req, res) => {
       return;
     }
 
-    if (!ANTHROPIC_API_KEY) {
-      console.log('[BOT] Natural language received but ANTHROPIC_API_KEY not set, ignoring');
-      await sendTelegramTo(chatId, '[AKA-1] 未設定のため自然言語応答は無効です。/help で利用可能なコマンドを確認してください。');
+    if (!ANTHROPIC_API_KEY && !GEMINI_API_KEY) {
+      console.log('[BOT] Natural language received but no LLM API key set, ignoring');
+      await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定のため自然言語応答は無効です。/help で利用可能なコマンドを確認してください。');
       return;
     }
 
