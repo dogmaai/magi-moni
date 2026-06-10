@@ -70,7 +70,7 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 1. **Slash コマンド** (`/status` `/wr` `/jobs` `/today` `/help`)
    - 固定 BigQuery クエリを叩いて整形済みテキストを返す（従来機能）
 
-2. **自然文** → **AKA-1 (Claude 3.5 Haiku) + tool calling**
+2. **自然文** → **AKA-1 (Claude Fable 5) + tool calling**
    - 認可: `TELEGRAM_CHAT_ID` と一致する chat のみ応答
    - 利用ツール (読み取り専用):
      - `get_today_trades` — 本日の取引一覧
@@ -88,7 +88,7 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 | `TELEGRAM_CHAT_ID` | 応答先・認可元の Telegram chat ID |
 | `ANTHROPIC_API_KEY` | AKA-1 自然文応答に必須（未設定なら自然文は無効化、slash コマンドのみ動作） |
 | `PROJECT_ID` | GCP project (default: `screen-share-459802`) |
-| `AKA1_MODEL` | 任意。デフォルト `claude-3-5-haiku-20241022` |
+| `AKA1_MODEL` | 任意。デフォルト `claude-fable-5` |
 
 ## 📈 SLA 目標
 
