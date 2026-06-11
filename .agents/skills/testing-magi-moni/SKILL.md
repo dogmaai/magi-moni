@@ -99,6 +99,8 @@ curl -s -X POST http://localhost:8090/webhook/telegram \
 
 Telegram message content won't be visible with dummy bot tokens (status 404). Verify message text via source code analysis or temporary `console.log` instrumentation.
 
+Note: model names may include provider prefixes (e.g. `anthropic/claude-haiku-4-5-20251001`); server.js strips `anthropic/` and `google/` prefixes at startup. Verify the startup log line `[AKA-1] Primary model: ... | Fallback: ...` shows the bare model names.
+
 ### BigQuery Tools
 
 | Tool | What it queries | Key table |
