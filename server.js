@@ -11,9 +11,37 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-// Strip provider prefixes (e.g. "anthropic/claude-haiku-4-5-20251001" → "claude-haiku-4-5-20251001")
-// so the model name is sent correctly to each provider's native API.
-const AKA1_MODEL = (process.env.AKA1_MODEL || 'claude-fable-5').replace(/^anthropic\//, '');
+const AKA1_MODEL_RAW = process.env.AKA1_MODEL || 'claude-fable-5';
+
+// Normalize Anthropic model name:
+// 1. Strip 'anthropic/' prefix (OpenRouter format not accepted by Anthropic API)
+// 2. Map common aliases to valid API model names
+const ANTHROPIC_MODEL_ALIASES = {
+  'claude-haiku': 'claude-haiku-4-5-20251001',
+  'claude-sonnet': 'claude-sonnet-4-20250514',
+  'haiku': 'claude-haiku-4-5-20251001',
+  'sonnet': 'claude-sonnet-4-20250514',
+  'fable': 'claude-fable-5',
+};
+
+function normalizeAnthropicModel(raw) {
+  let model = raw.trim();
+  // Strip provider prefix (e.g. 'anthropic/claude-haiku-4-5-20251001' → 'claude-haiku-4-5-20251001')
+  if (model.includes('/')) {
+    const stripped = model.split('/').pop();
+    console.log(`[AKA-1] Stripped provider prefix from model: "${model}" → "${stripped}"`);
+    model = stripped;
+  }
+  // Check alias table
+  if (ANTHROPIC_MODEL_ALIASES[model]) {
+    console.log(`[AKA-1] Resolved model alias: "${model}" → "${ANTHROPIC_MODEL_ALIASES[model]}"`);
+    model = ANTHROPIC_MODEL_ALIASES[model];
+  }
+  return model;
+}
+
+const AKA1_MODEL = normalizeAnthropicModel(AKA1_MODEL_RAW);
+// Strip provider prefix for Gemini fallback model too (e.g. 'google/gemini-2.5-flash' → 'gemini-2.5-flash')
 const GEMINI_FALLBACK_MODEL = (process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash').replace(/^google\//, '');
 const AKA1_MAX_TOOL_ITERATIONS = 5;
 
@@ -555,6 +583,7 @@ async function callClaudeWithTools(userMessage) {
       headers: {
         'x-api-key': ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31',
         'content-type': 'application/json'
       },
       body: JSON.stringify({
@@ -568,7 +597,11 @@ async function callClaudeWithTools(userMessage) {
     const data = await res.json();
     if (!res.ok || data.type === 'error') {
       const errMsg = data.error?.message || `HTTP ${res.status}`;
-      throw new Error(`Anthropic API: ${errMsg}`);
+      const isModelErr = errMsg.toLowerCase().includes('model') || errMsg.toLowerCase().includes('not_found');
+      const hint = isModelErr
+        ? ` (AKA1_MODEL="${AKA1_MODEL_RAW}" → API に送信: "${AKA1_MODEL}")。モデル名を確認してください。`
+        : '';
+      throw new Error(`Anthropic API: ${errMsg}${hint}`);
     }
 
     if (data.model) {
@@ -996,8 +1029,9 @@ async function handleBotCommand(chatId, text) {
   if (cmd === '/llm') {
     const claude = ANTHROPIC_API_KEY ? `✓ ${AKA1_MODEL}` : '✗ ANTHROPIC_API_KEY 未設定';
     const gemini = GEMINI_API_KEY ? `✓ ${GEMINI_FALLBACK_MODEL}` : '✗ GEMINI_API_KEY 未設定';
+    const normalized = AKA1_MODEL_RAW !== AKA1_MODEL ? `\n正規化: "${AKA1_MODEL_RAW}" → "${AKA1_MODEL}"` : '';
     const actual = aka1LastResponseModel ? `\n実モデル (API確認): ${aka1LastResponseModel}` : '\n実モデル: まだ応答なし（自然文を送ると記録されます）';
-    return sendTelegramTo(chatId, `[AKA-1] LLM 設定\n\nPrimary: Claude — ${claude}\nFallback: Gemini — ${gemini}${actual}\n\n※ Claude を常に優先。Claude 失敗時のみ Gemini にフォールバック。`);
+    return sendTelegramTo(chatId, `[AKA-1] LLM 設定\n\nPrimary: Claude — ${claude}\nFallback: Gemini — ${gemini}${normalized}${actual}\n\n※ Claude を常に優先。Claude 失敗時のみ Gemini にフォールバック。`);
   }
 
   if (cmd === '/status') {
@@ -1190,5 +1224,6 @@ app.post('/setup/webhook', async (req, res) => {
 });
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`MAGI Monitoring v3.0 on port ${PORT}`);
-  console.log(`[AKA-1] Primary model: ${AKA1_MODEL} | Fallback: ${GEMINI_FALLBACK_MODEL}`);
+  console.log(`[AKA-1] Model config: AKA1_MODEL="${AKA1_MODEL}"${AKA1_MODEL_RAW !== AKA1_MODEL ? ` (raw: "${AKA1_MODEL_RAW}")` : ''}`);
+  console.log(`[AKA-1] Fallback: GEMINI_FALLBACK_MODEL="${GEMINI_FALLBACK_MODEL}"`);
 });
