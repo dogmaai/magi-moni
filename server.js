@@ -527,7 +527,7 @@ async function callClaudeWithTools(userMessage) {
   if (!ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY が未設定です');
   }
-  const systemPrompt =
+  const systemPromptText =
     `あなたは MAGI トレーディングシステムの監視 bot「AKA-1」です。モデル: ${AKA1_MODEL}。` +
     'あなたは Anthropic の Claude です。Gemini ではありません。モデル名を聞かれたら上記を正確に答えてください。' +
     '日本語で簡潔に応答してください。' +
@@ -539,6 +539,11 @@ async function callClaudeWithTools(userMessage) {
     '\n\nMooMooペーパー取引機能も利用可能です。moomoo_* ツールで口座残高・ポジション・気配値の確認、' +
     '成行注文の発注ができます。全て SIMULATE（デモ）環境のみで、本番取引は行われません。' +
     '発注時は必ずユーザーの指示を確認し、symbol / side / qty を明示してから実行してください。';
+
+  // Prompt caching: system prompt is static per AKA1_MODEL, cache it to save ~90% input cost
+  const systemPrompt = [
+    { type: 'text', text: systemPromptText, cache_control: { type: 'ephemeral' } }
+  ];
 
   const messages = [{ role: 'user', content: userMessage }];
 
@@ -567,6 +572,12 @@ async function callClaudeWithTools(userMessage) {
     if (data.model) {
       aka1LastResponseModel = data.model;
       console.log(`[AKA-1] API response model: ${data.model}`);
+    }
+    if (data.usage) {
+      const u = data.usage;
+      const cached = u.cache_read_input_tokens || 0;
+      const created = u.cache_creation_input_tokens || 0;
+      console.log(`[AKA-1] tokens: in=${u.input_tokens} out=${u.output_tokens} cache_read=${cached} cache_write=${created}`);
     }
 
     messages.push({ role: 'assistant', content: data.content });
