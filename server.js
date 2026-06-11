@@ -11,8 +11,10 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const AKA1_MODEL = process.env.AKA1_MODEL || 'claude-fable-5';
-const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
+// Strip provider prefixes (e.g. "anthropic/claude-haiku-4-5-20251001" → "claude-haiku-4-5-20251001")
+// so the model name is sent correctly to each provider's native API.
+const AKA1_MODEL = (process.env.AKA1_MODEL || 'claude-fable-5').replace(/^anthropic\//, '');
+const GEMINI_FALLBACK_MODEL = (process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash').replace(/^google\//, '');
 const AKA1_MAX_TOOL_ITERATIONS = 5;
 
 // Telegram webhook secret: derived from bot token to prevent spoofed webhook calls
@@ -1086,7 +1088,7 @@ async function handleAka1Chat(chatId, text) {
       return;
     } catch (e) {
       claudeError = e.message;
-      console.error('[AKA-1] Claude error, trying Gemini fallback:', claudeError);
+      console.error(`[AKA-1] Claude (${AKA1_MODEL}) error, trying Gemini fallback:`, claudeError);
     }
   } else {
     console.log('[AKA-1] ANTHROPIC_API_KEY not set, using Gemini fallback');
@@ -1188,4 +1190,5 @@ app.post('/setup/webhook', async (req, res) => {
 });
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`MAGI Monitoring v3.0 on port ${PORT}`);
+  console.log(`[AKA-1] Primary model: ${AKA1_MODEL} | Fallback: ${GEMINI_FALLBACK_MODEL}`);
 });
