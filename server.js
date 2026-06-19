@@ -377,7 +377,7 @@ async function akaTool_getDailySummary({ date }) {
     GROUP BY llm_provider
     ORDER BY total_pnl_usd DESC
   `;
-  const rows = await runQuery(query, { date: target }, { date: 'DATE' });
+  const rows = await runQuery(query, { date: target });
   return { date: target, rows };
 }
 
@@ -669,6 +669,9 @@ async function callClaudeWithTools(userMessage) {
 }
 
 // ===== BigQueryクエリヘルパー =====
+// 注意: DATE 値のパラメータは型指定なし(文字列)で渡すこと。@google-cloud/bigquery は
+// プレーン文字列に明示 DATE 型を付けると値が空=NULL にバインドされ、DATE(...) 比較が常に
+// 一致しなくなる。STRING は DATE(...) との比較で正しく型変換される。
 async function runQuery(query, params, types) {
   const options = { query };
   if (params) options.params = params;
@@ -718,12 +721,11 @@ async function generateDailyReport() {
   `;
 
   const todayParams = { today };
-  const todayTypes = { today: 'DATE' };
 
   const [trades, l4Blocks, blockStats] = await Promise.all([
-    runQuery(tradeQuery, todayParams, todayTypes).catch(() => []),
+    runQuery(tradeQuery, todayParams).catch(() => []),
     runQuery(l4Query).catch(() => []),
-    runQuery(blockQuery, todayParams, todayTypes).catch(() => [])
+    runQuery(blockQuery, todayParams).catch(() => [])
   ]);
 
   // レポート構築
@@ -817,11 +819,10 @@ async function generateWeeklyReport() {
   `;
 
   const dateParams = { startDate, endDate };
-  const dateTypes = { startDate: 'DATE', endDate: 'DATE' };
 
   const [trend, llmPerf, patterns] = await Promise.all([
-    runQuery(trendQuery, dateParams, dateTypes).catch(() => []),
-    runQuery(llmPerfQuery, dateParams, dateTypes).catch(() => []),
+    runQuery(trendQuery, dateParams).catch(() => []),
+    runQuery(llmPerfQuery, dateParams).catch(() => []),
     runQuery(patternQuery).catch(() => [])
   ]);
 
