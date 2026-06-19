@@ -13,6 +13,22 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const AKA1_MODEL_RAW = process.env.AKA1_MODEL || 'claude-fable-5';
 
+// Canonical America/New_York (US/Eastern) calendar-date helper, mirroring
+// magi-deep-research/src/nyse.mjs (etDateString) and magi-core/lib/et-date.js.
+// Trade "date" buckets are keyed in ET (DATE(timestamp, 'America/New_York')) so
+// report windows track NYSE days instead of rolling to the next UTC calendar
+// day in the evening ET or shifting one hour across DST. The en-CA locale with
+// these options renders as YYYY-MM-DD.
+const ET_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+function nyDateString(at = new Date()) {
+  return ET_DATE_FMT.format(at);
+}
+
 // Normalize Anthropic model name:
 // 1. Strip 'anthropic/' prefix (OpenRouter format not accepted by Anthropic API)
 // 2. Map common aliases to valid API model names
@@ -343,7 +359,7 @@ async function akaTool_getWinrateByLlm({ days }) {
 }
 
 async function akaTool_getDailySummary({ date }) {
-  const target = date || new Date().toISOString().split('T')[0];
+  const target = date || nyDateString();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) {
     throw new Error('date は YYYY-MM-DD 形式で指定してください');
   }
@@ -361,7 +377,7 @@ async function akaTool_getDailySummary({ date }) {
     GROUP BY llm_provider
     ORDER BY total_pnl_usd DESC
   `;
-  const rows = await runQuery(query, { date: target }, { date: 'DATE' });
+  const rows = await runQuery(query, { date: target });
   return { date: target, rows };
 }
 
@@ -653,6 +669,9 @@ async function callClaudeWithTools(userMessage) {
 }
 
 // ===== BigQueryクエリヘルパー =====
+// 注意: DATE 値のパラメータは型指定なし(文字列)で渡すこと。@google-cloud/bigquery は
+// プレーン文字列に明示 DATE 型を付けると値が空=NULL にバインドされ、DATE(...) 比較が常に
+// 一致しなくなる。STRING は DATE(...) との比較で正しく型変換される。
 async function runQuery(query, params, types) {
   const options = { query };
   if (params) options.params = params;
@@ -662,9 +681,10 @@ async function runQuery(query, params, types) {
 }
 
 // ===== 日次レポート生成 =====
-// Phase 4: 毎日22:00 UTCにCloud Schedulerが /report/daily を叩く
+// Phase 4: Cloud Scheduler が市場クローズ後 (22:00 UTC ≈ 17:00/18:00 ET、DSTで変動) に
+// /report/daily を叩く。集計対象日は America/New_York 基準で算出する。
 async function generateDailyReport() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = nyDateString();
 
   // 当日取引サマリー
   const tradeQuery = `
@@ -676,7 +696,7 @@ async function generateDailyReport() {
       ROUND(COUNTIF(result = 'WIN') / NULLIF(COUNT(*), 0) * 100, 1) AS win_rate,
       ROUND(SUM(pnl_amount), 2) AS total_pnl_usd
     FROM \`${PROJECT_ID}.magi_core.trades_active\`
-    WHERE DATE(timestamp) = @today
+    WHERE DATE(timestamp, 'America/New_York') = @today
       AND result IN ('WIN','LOSE')
     GROUP BY llm_provider
     ORDER BY total_pnl_usd DESC
@@ -694,19 +714,18 @@ async function generateDailyReport() {
   const blockQuery = `
     SELECT blocked_by, COUNT(*) AS count
     FROM \`${PROJECT_ID}.magi_core.trades\`
-    WHERE DATE(timestamp) = @today
+    WHERE DATE(timestamp, 'America/New_York') = @today
       AND trade_mode = 'BLOCKED'
     GROUP BY blocked_by
     ORDER BY count DESC
   `;
 
   const todayParams = { today };
-  const todayTypes = { today: 'DATE' };
 
   const [trades, l4Blocks, blockStats] = await Promise.all([
-    runQuery(tradeQuery, todayParams, todayTypes).catch(() => []),
+    runQuery(tradeQuery, todayParams).catch(() => []),
     runQuery(l4Query).catch(() => []),
-    runQuery(blockQuery, todayParams, todayTypes).catch(() => [])
+    runQuery(blockQuery, todayParams).catch(() => [])
   ]);
 
   // レポート構築
@@ -752,19 +771,20 @@ async function generateDailyReport() {
 }
 
 // ===== 週次レポート生成 =====
-// Phase 4: 毎週月曜00:00 UTCにCloud Schedulerが /report/weekly を叩く
+// Phase 4: Cloud Scheduler が週明け (月曜 00:00 UTC ≈ 日曜 19:00/20:00 ET、DSTで変動) に
+// /report/weekly を叩く。集計期間は America/New_York 基準で算出する。
 async function generateWeeklyReport() {
-  const endDate = new Date().toISOString().split('T')[0];
-  const startDate = new Date(Date.now() - 7 * 86400 * 1000).toISOString().split('T')[0];
+  const endDate = nyDateString();
+  const startDate = nyDateString(new Date(Date.now() - 7 * 86400 * 1000));
 
   // 週次勝率トレンド（日別）
   const trendQuery = `
     SELECT
-      DATE(timestamp) AS trade_date,
+      DATE(timestamp, 'America/New_York') AS trade_date,
       ROUND(COUNTIF(result = 'WIN') / NULLIF(COUNT(*), 0) * 100, 1) AS win_rate,
       COUNT(*) AS trades
     FROM \`${PROJECT_ID}.magi_core.trades_active\`
-    WHERE DATE(timestamp) BETWEEN @startDate AND @endDate
+    WHERE DATE(timestamp, 'America/New_York') BETWEEN @startDate AND @endDate
       AND result IN ('WIN','LOSE')
     GROUP BY trade_date
     ORDER BY trade_date
@@ -780,7 +800,7 @@ async function generateWeeklyReport() {
       ROUND(SUM(pnl_amount), 2) AS total_pnl_usd,
       ROUND(AVG(pnl_percent), 2) AS avg_pnl_pct
     FROM \`${PROJECT_ID}.magi_core.trades_active\`
-    WHERE DATE(timestamp) BETWEEN @startDate AND @endDate
+    WHERE DATE(timestamp, 'America/New_York') BETWEEN @startDate AND @endDate
       AND result IN ('WIN','LOSE')
     GROUP BY llm_provider
     ORDER BY win_rate DESC
@@ -799,11 +819,10 @@ async function generateWeeklyReport() {
   `;
 
   const dateParams = { startDate, endDate };
-  const dateTypes = { startDate: 'DATE', endDate: 'DATE' };
 
   const [trend, llmPerf, patterns] = await Promise.all([
-    runQuery(trendQuery, dateParams, dateTypes).catch(() => []),
-    runQuery(llmPerfQuery, dateParams, dateTypes).catch(() => []),
+    runQuery(trendQuery, dateParams).catch(() => []),
+    runQuery(llmPerfQuery, dateParams).catch(() => []),
     runQuery(patternQuery).catch(() => [])
   ]);
 
@@ -981,7 +1000,7 @@ app.get('/results', (req, res) => {
 });
 
 // ===== 日次レポート（Phase 4）=====
-// Cloud Schedulerから毎日22:00 UTCに叩かれる
+// Cloud Scheduler から市場クローズ後 (22:00 UTC ≈ 17:00/18:00 ET、DSTで変動) に叩かれる
 app.post('/report/daily', async (req, res) => {
   if (!(await verifyInternalRequest(req))) {
     return res.status(403).json({ error: 'Unauthorized' });
@@ -999,7 +1018,7 @@ app.post('/report/daily', async (req, res) => {
 });
 
 // ===== 週次レポート（Phase 4）=====
-// Cloud Schedulerから毎週月曜00:00 UTCに叩かれる
+// Cloud Scheduler から週明け (月曜 00:00 UTC ≈ 日曜 19:00/20:00 ET、DSTで変動) に叩かれる
 app.post('/report/weekly', async (req, res) => {
   if (!(await verifyInternalRequest(req))) {
     return res.status(403).json({ error: 'Unauthorized' });
@@ -1091,7 +1110,7 @@ async function handleBotCommand(chatId, text) {
 
   if (cmd === '/today') {
     try {
-      const query = `SELECT symbol, side, llm_provider, result, timestamp FROM \`${PROJECT_ID}.magi_core.trades_active\` WHERE DATE(timestamp) = CURRENT_DATE('America/New_York') ORDER BY timestamp DESC LIMIT 20`;
+      const query = `SELECT symbol, side, llm_provider, result, timestamp FROM \`${PROJECT_ID}.magi_core.trades_active\` WHERE DATE(timestamp, 'America/New_York') = CURRENT_DATE('America/New_York') ORDER BY timestamp DESC LIMIT 20`;
       const [rows] = await bq.query({ query, useLegacySql: false });
       if (rows.length === 0) return sendTelegram('[MAGI] 本日の取引はまだありません');
       let msg = `[MAGI] 本日の取引 (${rows.length}件)\n\n`;
