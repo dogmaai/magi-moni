@@ -561,6 +561,8 @@ async function callOllamaWithTools(userMessage) {
     }
 
     const data = await res.json();
+    aka1LastResponseModel = data.model || OLLAMA_MODEL;
+    console.log(`[AKA-1:OLLAMA] response model: ${aka1LastResponseModel}`);
     if (data.usage) {
       console.log(`[AKA-1:OLLAMA] tokens: in=${data.usage.prompt_tokens || 0} out=${data.usage.completion_tokens || 0}`);
     }
@@ -579,6 +581,8 @@ async function callOllamaWithTools(userMessage) {
     messages.push(message);
     for (const tc of message.tool_calls) {
       const fnName = tc.function.name;
+      // Some Ollama models may not return tool_call_id; generate a fallback
+      const tcId = tc.id || `call_${fnName}_${i}`;
       let fnArgs = tc.function.arguments;
       if (typeof fnArgs === 'string') {
         try { fnArgs = JSON.parse(fnArgs); } catch (_) { fnArgs = {}; }
@@ -588,14 +592,14 @@ async function callOllamaWithTools(userMessage) {
         const result = await executeAka1Tool(fnName, fnArgs);
         messages.push({
           role: 'tool',
-          tool_call_id: tc.id,
+          tool_call_id: tcId,
           content: JSON.stringify(result)
         });
       } catch (e) {
         console.error(`[AKA-1:OLLAMA] tool error: ${e.message}`);
         messages.push({
           role: 'tool',
-          tool_call_id: tc.id,
+          tool_call_id: tcId,
           content: `Error: ${e.message}`
         });
       }
