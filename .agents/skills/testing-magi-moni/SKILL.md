@@ -1,6 +1,6 @@
 ---
 name: testing-magi-moni
-description: Test AKA-1 Telegram bot tools locally against real BigQuery and MooMoo APIs. Use when verifying new AKA-1 tools, BigQuery query changes, or MooMoo proxy integration.
+description: Test AKA-1 Telegram bot tools locally against real BigQuery and MooMoo APIs. Use when verifying new AKA-1 tools, BigQuery query changes, MooMoo proxy integration, or LLM routing changes.
 ---
 
 # Testing magi-moni (AKA-1)
@@ -9,50 +9,129 @@ description: Test AKA-1 Telegram bot tools locally against real BigQuery and Moo
 
 magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 - Telegram bot webhook for slash commands and natural language chat (AKA-1)
-- AKA-1 uses Claude Fable 5 (default, configurable via `AKA1_MODEL` env var) with tool calling to query BigQuery and MooMoo
-- Gemini fallback when Claude is unavailable (non-sticky: always tries Claude first)
+- AKA-1 uses Ollama (TIALA local qwen2.5:14b) as primary LLM with tool calling
+- 3-tier fallback chain: Ollama → Claude Fable 5 → Gemini 2.5 Flash (non-sticky: always tries Ollama first)
 - Pub/Sub endpoint for trade result ingestion
 
-## Claude Fable 5 — Mythos-class Model (超高額注意)
+## LLM Provider Architecture
 
-AKA-1 のデフォルト LLM は `claude-fable-5` で、Anthropic の最上位クラス「Mythos」に属する。
-
-### 料金比較 (2026年6月時点)
-
-| モデル | クラス | Input $/MTok | Output $/MTok | 備考 |
+| Priority | Provider | Model | Env Var | Cost |
 |---|---|---|---|---|
-| **Claude Fable 5** | **Mythos** | **$10** | **$50** | AKA-1 デフォルト。最高性能・最高額 |
-| Claude Opus 4.8 | Opus | $5 | $25 | Fable の半額。セーフガード発動時のフォールバック先 |
-| Claude Sonnet 4.6 | Sonnet | $3 | $15 | バランス型 |
-| Claude Haiku 4.5 | Haiku | $1 | $5 | 最安。Fable の1/10 |
-| Gemini 2.5 Flash | — | 低コスト | 低コスト | AKA-1 の Claude 失敗時フォールバック |
+| Primary | Ollama (TIALA) | qwen2.5:14b | `OLLAMA_BASE_URL` | Zero (local) |
+| Fallback 1 | Claude | claude-fable-5 (Mythos) | `ANTHROPIC_API_KEY` | $10/$50 per MTok |
+| Fallback 2 | Gemini | gemini-2.5-flash | `GEMINI_API_KEY` | Low cost |
 
-### Fable 5 の機能・特性
-
-- **Fable 5 = Mythos 5 と同じ基盤モデル** + 安全ガードレール（サイバーセキュリティ/バイオ領域は Opus 4.8 にフォールバック）
-- 長時間・複雑タスクほど他モデルとの差が拡大（短い質問では差が少ない）
-- SWE-Bench Pro 80.3%（+11pt）、FrontierCode 全モデルトップ
-- 金融分析: Hebbia Finance Benchmark 最高スコア、IMC トレーディング分析評価ほぼ全項目トップ
-- Vision SOTA、1M トークンコンテキスト
-- トークン効率が高く、少ないターンでタスク完了 → 単価2倍でも実コストは近づく場合あり
-- Prompt caching で input 90% 割引可能
-
-### コスト管理の注意
-
-- **Fable はチャット応答専用** — ユーザーが AKA-1 に自然言語で話しかけた時だけ課金
-- スラッシュコマンド (`/status`, `/wr`, `/jobs`, `/today`, `/llm`, `/help`) は Claude を呼ばない
-- Cloud Scheduler 定期実行 (`/report/daily`, `/report/weekly`) でも Fable を呼ばない
-- 他の Cloud Run サービス/ジョブ (magi-core, magi-stg, magi-ac 等) では Fable 未使用
-- **テスト時に実 ANTHROPIC_API_KEY で自然言語チャットを何度も送ると課金が発生するため注意**
-- `AKA1_MODEL` を変更する際は料金差を必ず確認すること
+### Cost Notes
+- Ollama is zero-cost (local inference on TIALA hardware via Cloudflare Tunnel)
+- **Claude Fable 5 is extremely expensive** — only invoked when Ollama fails
+- Slash commands (`/status`, `/wr`, `/jobs`, `/today`, `/llm`, `/help`) never invoke any LLM
+- **テスト時に実 ANTHROPIC_API_KEY で自然言語チャットを送ると課金が発生するため注意**
 
 ## Environment Setup
 
 ```bash
 cd ~/repos/magi-moni
 npm install
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcp-key.json
+# Write GCP_SERVICE_ACCOUNT_KEY env var to a file
+echo "$GCP_SERVICE_ACCOUNT_KEY" > /tmp/gcp-key.json
+export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json
 ```
+
+## Webhook Simulation Testing
+
+### Important: Webhook Secret Header
+
+The server validates a secret token on all webhook requests. You MUST include the `X-Telegram-Bot-Api-Secret-Token` header, computed as the first 32 chars of the SHA-256 hash of the bot token:
+
+```bash
+SECRET=$(echo -n "$TELEGRAM_BOT_TOKEN" | sha256sum | head -c 32)
+# For dummy token:
+SECRET=$(echo -n "dummy_bot_token" | sha256sum | head -c 32)
+```
+
+Without this header, requests will be rejected with `[BOT] Rejected webhook: invalid secret token`.
+
+### Capturing Telegram Message Text
+
+With dummy bot tokens, Telegram API returns 404 and you can't see the message content in server logs. Create a CJS wrapper that intercepts `https.request` to capture sendMessage payloads:
+
+```javascript
+// test-server.js (place in repo root, don't commit)
+const https = require('https');
+const origRequest = https.request;
+https.request = function(options, cb) {
+  if (options.hostname === 'api.telegram.org' && options.path?.includes('/sendMessage')) {
+    const req = origRequest.call(this, options, cb);
+    const origReqWrite = req.write.bind(req);
+    req.write = function(data) {
+      try {
+        const parsed = JSON.parse(data);
+        console.log(`[TEST-CAPTURE] sendMessage text: ${parsed.text}`);
+      } catch(_) {}
+      return origReqWrite(data);
+    };
+    return req;
+  }
+  return origRequest.call(this, options, cb);
+};
+require('./server.js');
+```
+
+Then start with `node test-server.js` instead of `node server.js`. Remember to delete this file before committing.
+
+### LLM Routing Tests
+
+Test different fallback scenarios by varying which env vars are set:
+
+```bash
+# Test 1: Full 3-tier config (Ollama primary)
+PORT=8090 OLLAMA_BASE_URL=http://localhost:19999 \
+  ANTHROPIC_API_KEY=dummy GEMINI_API_KEY=dummy \
+  TELEGRAM_CHAT_ID=12345 TELEGRAM_BOT_TOKEN=dummy_bot_token \
+  GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json \
+  node test-server.js
+
+# Test 2: Ollama-only (no Claude/Gemini)
+PORT=8091 OLLAMA_BASE_URL=http://localhost:19999 \
+  TELEGRAM_CHAT_ID=12345 TELEGRAM_BOT_TOKEN=dummy_bot_token \
+  GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json \
+  node test-server.js
+
+# Test 3: No LLM keys at all
+PORT=8092 TELEGRAM_CHAT_ID=12345 TELEGRAM_BOT_TOKEN=dummy_bot_token \
+  GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json \
+  node test-server.js
+```
+
+Send webhook requests:
+```bash
+SECRET=$(echo -n "dummy_bot_token" | sha256sum | head -c 32)
+
+# Slash command (no LLM needed)
+curl -s -X POST http://localhost:8090/webhook/telegram \
+  -H 'Content-Type: application/json' \
+  -H "X-Telegram-Bot-Api-Secret-Token: $SECRET" \
+  -d '{"message":{"chat":{"id":12345},"text":"/llm"}}'
+
+# Natural language (triggers LLM chain)
+curl -s -X POST http://localhost:8090/webhook/telegram \
+  -H 'Content-Type: application/json' \
+  -H "X-Telegram-Bot-Api-Secret-Token: $SECRET" \
+  -d '{"message":{"chat":{"id":12345},"text":"今日の取引は？"}}'
+```
+
+### Key Log Patterns to Verify
+
+| Scenario | Expected Log Pattern |
+|---|---|
+| Ollama attempted | `[AKA-1] Ollama (qwen2.5:14b) error, trying Claude fallback:` |
+| Claude skipped (no key) | `[AKA-1] ANTHROPIC_API_KEY not set, skipping Claude` |
+| Claude attempted (dummy key) | `Anthropic API: invalid x-api-key` |
+| Gemini attempted (dummy key) | `Gemini API: API key not valid` |
+| All LLMs failed | `[AKA-1 エラー] 全 LLM 失敗:` |
+| No LLM keys set | `[BOT] Natural language received but no LLM API key set, ignoring` |
+| Startup (Ollama configured) | `[AKA-1] Primary: Ollama qwen2.5:14b (configured)` |
+| Startup (Ollama NOT configured) | `[AKA-1] Primary: Ollama qwen2.5:14b (NOT configured)` |
 
 ## Testing AKA-1 Tools Locally
 
@@ -71,35 +150,6 @@ const { BigQuery } = require('@google-cloud/bigquery');
 ```
 
 Note: magi-moni uses CommonJS (`require`), but when running inline scripts with `--input-type=module`, use `createRequire` to load CJS packages.
-
-### Webhook Simulation Testing (Model Config / LLM Path)
-
-To verify model configuration changes or LLM routing without needing real API keys:
-
-```bash
-# Start server with dummy keys
-PORT=8090 ANTHROPIC_API_KEY=dummy_test_key TELEGRAM_CHAT_ID=12345 \
-  TELEGRAM_BOT_TOKEN=dummy_bot_token \
-  GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcp-key.json \
-  node server.js
-
-# Test /llm command — verify model name in output
-curl -s -X POST http://localhost:8090/webhook/telegram \
-  -H 'Content-Type: application/json' \
-  -d '{"message":{"chat":{"id":12345},"text":"/llm"}}'
-# Server log should show: [BOT] Command: /llm
-
-# Test natural language — verify Claude path is attempted
-curl -s -X POST http://localhost:8090/webhook/telegram \
-  -H 'Content-Type: application/json' \
-  -d '{"message":{"chat":{"id":12345},"text":"今日の取引は？"}}'
-# Server log should show the Anthropic API call attempt with the configured model
-# Expected: "invalid x-api-key" error (dummy key), confirming Claude path was taken
-```
-
-Telegram message content won't be visible with dummy bot tokens (status 404). Verify message text via source code analysis or temporary `console.log` instrumentation.
-
-Note: model names may include provider prefixes (e.g. `anthropic/claude-haiku-4-5-20251001`); server.js strips `anthropic/` and `google/` prefixes at startup. Verify the startup log line `[AKA-1] Primary model: ... | Fallback: ...` shows the bare model names.
 
 ### BigQuery Tools
 
@@ -146,10 +196,16 @@ When testing MooMoo tools:
 3. Bridge may be offline (TIALA local machine) — test error handling path too
 
 When testing model/LLM config changes:
-1. Verify `/llm` command output shows correct model ID
-2. Verify `/help` text references correct model name
-3. Verify natural language path attempts the correct model via server logs
-4. Check function names and comments are consistent with model name
+1. Verify startup logs show correct provider priorities
+2. Verify `/llm` command output shows correct 3-tier config
+3. Verify `/help` text references correct primary model name
+4. Verify natural language triggers correct fallback order via server logs
+5. Verify `aka1LastResponseModel` is updated by all LLM handlers (not just Claude)
+
+When testing tool schema changes:
+1. Verify `toOllamaTools()` produces `{ type: 'function', function: { name, description, parameters } }` for all tools
+2. Verify `toGeminiFunctionDeclarations()` produces correct Gemini format
+3. Verify tool count matches `AKA1_TOOLS` array length
 
 ## Telegram Webhook Gotchas
 
@@ -171,5 +227,5 @@ Deploy is done by Jun manually via Cloud Shell after PR merge.
 ## Devin Secrets Needed
 
 - `GCP_SERVICE_ACCOUNT_KEY` — GCP service account key for BigQuery access (available as org secret)
-- `ANTHROPIC_API_KEY` — Only needed if testing the full AKA-1 LLM loop (not needed for individual tool testing or webhook simulation). **注意: Fable 5 は超高額 ($10/$50 per MTok) のため、テスト回数を最小限に**
+- `ANTHROPIC_API_KEY` — Only needed if testing the full AKA-1 Claude loop (not needed for routing tests or tool testing). **注意: Fable 5 は超高額 ($10/$50 per MTok) のため、テスト回数を最小限に**
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Only needed for live Telegram testing
