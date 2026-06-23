@@ -9,23 +9,48 @@ description: Test AKA-1 Telegram bot tools locally against real BigQuery and Moo
 
 magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 - Telegram bot webhook for slash commands and natural language chat (AKA-1)
-- AKA-1 uses Ollama (TIALA local qwen2.5:14b) as primary LLM with tool calling
-- 3-tier fallback chain: Ollama → Claude Fable 5 → Gemini 2.5 Flash (non-sticky: always tries Ollama first)
+- Modular architecture: `lib/config.js`, `lib/tools.js`, `lib/llm.js`, `lib/commands.js`, `lib/reports.js`, etc.
+- AKA-1 uses Sakana AI (fugu-ultra) as primary LLM with tool calling
+- 3-tier fallback chain: Sakana AI → Ollama (TIALA local qwen2.5:14b) → Gemini 2.5 Flash (non-sticky: always tries Sakana first)
+- 18 tools total: 6 BQ read + 5 MooMoo + 4 TIALA ops + 3 system ops
 - Pub/Sub endpoint for trade result ingestion
 
 ## LLM Provider Architecture
 
 | Priority | Provider | Model | Env Var | Cost |
 |---|---|---|---|---|
-| Primary | Ollama (TIALA) | qwen2.5:14b | `OLLAMA_BASE_URL` | Zero (local) |
-| Fallback 1 | Claude | claude-fable-5 (Mythos) | `ANTHROPIC_API_KEY` | $10/$50 per MTok |
+| Primary | Sakana AI | fugu-ultra | `SAKANA_API_KEY` | Moderate |
+| Fallback 1 | Ollama (TIALA) | qwen2.5:14b | `OLLAMA_BASE_URL` | Zero (local) |
 | Fallback 2 | Gemini | gemini-2.5-flash | `GEMINI_API_KEY` | Low cost |
 
 ### Cost Notes
 - Ollama is zero-cost (local inference on TIALA hardware via Cloudflare Tunnel)
-- **Claude Fable 5 is extremely expensive** — only invoked when Ollama fails
 - Slash commands (`/status`, `/wr`, `/jobs`, `/today`, `/llm`, `/help`) never invoke any LLM
-- **テスト時に実 ANTHROPIC_API_KEY で自然言語チャットを送ると課金が発生するため注意**
+- テスト時に実 SAKANA_API_KEY で自然言語チャットを送ると課金が発生するため注意
+
+## Modular Architecture (v4.0+)
+
+The codebase is split into focused modules under `lib/`:
+
+| Module | Purpose |
+|---|---|
+| `lib/config.js` | Environment variables, constants |
+| `lib/telegram.js` | `sendTelegram`, `sendTypingAction` helpers |
+| `lib/bigquery.js` | BQ client + `runQuery` helper |
+| `lib/moomoo.js` | magi-moomoo Cloud Run proxy client (OIDC) |
+| `lib/tiala.js` | central-dogma (TIALA) REST client via BQ service discovery |
+| `lib/policy-engine.js` | `checkPolicy()` for system operations |
+| `lib/tools.js` | `AKA1_TOOLS[18]` + `executeAka1Tool` + format converters |
+| `lib/llm.js` | `callSakana/Ollama/GeminiWithTools` + `handleAka1Chat` |
+| `lib/commands.js` | Slash command handler (`handleBotCommand`) |
+| `lib/reports.js` | Daily/weekly report generators |
+| `server.js` | ~200 line Express entry point |
+
+You can test individual tools directly without running the full server:
+```javascript
+const { executeAka1Tool } = require('./lib/tools');
+const result = await executeAka1Tool('get_winrate_by_llm', { days: 7 });
+```
 
 ## Environment Setup
 
@@ -84,14 +109,14 @@ Then start with `node test-server.js` instead of `node server.js`. Remember to d
 Test different fallback scenarios by varying which env vars are set:
 
 ```bash
-# Test 1: Full 3-tier config (Ollama primary)
-PORT=8090 OLLAMA_BASE_URL=http://localhost:19999 \
-  ANTHROPIC_API_KEY=dummy GEMINI_API_KEY=dummy \
+# Test 1: Full 3-tier config (Sakana primary, Ollama fallback)
+PORT=8090 SAKANA_API_KEY=dummy OLLAMA_BASE_URL=http://localhost:19999 \
+  GEMINI_API_KEY=dummy \
   TELEGRAM_CHAT_ID=12345 TELEGRAM_BOT_TOKEN=dummy_bot_token \
   GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json \
   node test-server.js
 
-# Test 2: Ollama-only (no Claude/Gemini)
+# Test 2: Ollama-only (no Sakana/Gemini)
 PORT=8091 OLLAMA_BASE_URL=http://localhost:19999 \
   TELEGRAM_CHAT_ID=12345 TELEGRAM_BOT_TOKEN=dummy_bot_token \
   GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json \
@@ -124,32 +149,30 @@ curl -s -X POST http://localhost:8090/webhook/telegram \
 
 | Scenario | Expected Log Pattern |
 |---|---|
-| Ollama attempted | `[AKA-1] Ollama (qwen2.5:14b) error, trying Claude fallback:` |
-| Claude skipped (no key) | `[AKA-1] ANTHROPIC_API_KEY not set, skipping Claude` |
-| Claude attempted (dummy key) | `Anthropic API: invalid x-api-key` |
+| Sakana attempted (dummy key) | `Sakana API:` error |
+| Ollama attempted | `[AKA-1] Sakana ... error, trying Ollama fallback:` |
+| Ollama skipped (no URL) | `[AKA-1] OLLAMA_BASE_URL not set, skipping Ollama` |
 | Gemini attempted (dummy key) | `Gemini API: API key not valid` |
 | All LLMs failed | `[AKA-1 エラー] 全 LLM 失敗:` |
 | No LLM keys set | `[BOT] Natural language received but no LLM API key set, ignoring` |
-| Startup (Ollama configured) | `[AKA-1] Primary: Ollama qwen2.5:14b (configured)` |
-| Startup (Ollama NOT configured) | `[AKA-1] Primary: Ollama qwen2.5:14b (NOT configured)` |
+| Startup (Ollama configured) | `Fallback 1: Ollama qwen2.5:14b (configured)` |
+| Startup (Ollama NOT configured) | `Fallback 1: Ollama qwen2.5:14b (NOT configured)` |
 
 ## Testing AKA-1 Tools Locally
 
-AKA-1 tools are plain async functions that query BigQuery or call MooMoo APIs. You can test them directly without running the full Express server or Telegram webhook.
-
-### Pattern: Copy function from server.js and run via Node.js
+AKA-1 tools are plain async functions accessible via `executeAka1Tool(name, input)`. You can test them directly without running the full Express server:
 
 ```bash
-node --input-type=module -e "
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const { BigQuery } = require('@google-cloud/bigquery');
-// ... copy the tool function from server.js ...
-// ... call it and verify output ...
+cd ~/repos/magi-moni
+export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json
+
+node -e "
+const { executeAka1Tool } = require('./lib/tools');
+executeAka1Tool('get_winrate_by_llm', { days: 7 })
+  .then(r => console.log(JSON.stringify(r, null, 2)))
+  .catch(e => console.error(e.message));
 "
 ```
-
-Note: magi-moni uses CommonJS (`require`), but when running inline scripts with `--input-type=module`, use `createRequire` to load CJS packages.
 
 ### BigQuery Tools
 
@@ -160,8 +183,25 @@ Note: magi-moni uses CommonJS (`require`), but when running inline scripts with 
 | `get_daily_summary` | Daily summary | `magi_core.trades_active` |
 | `get_l4_probation` | L4 blocks | `magi_core.l4_probation` |
 | `get_constitution` | MAGI Constitution | `magi_core.constitution` |
+| `query_thoughts` | PLM thought logs | `magi_core.thoughts_active` |
 
 All BigQuery queries use `location: 'US'` (magi_core dataset is in US region).
+
+**Note on `thoughts_active` schema**: Columns are `session_id, timestamp, content, trade_mode, llm_provider, unit_name, symbol, action, reasoning, hypothesis, confidence, concerns, prompt_version`. There is NO `result` column — use `trade_mode` for filtering (values: NORMAL, BLOCKED, etc.).
+
+### System Operation Tools
+
+| Tool | Operation | Policy |
+|---|---|---|
+| `unblock_l4` | Delete from `l4_probation` table | confirm_required |
+| `trigger_job` | Run Cloud Scheduler job via API | confirm_required |
+| `trigger_optuna` | Shortcut for `trigger_job('magi-optuna-optimizer')` | confirm_required |
+
+System ops use a 2-step confirmation flow:
+1. Call without `confirmed` → returns `{status: 'confirmation_required', message: '...'}`
+2. Call with `confirmed: true` → executes the operation
+
+**Important**: `trigger_optuna` must use Scheduler job name `magi-optuna-optimizer` (NOT Cloud Run Job name `magi-optuna-job`).
 
 ### MooMoo Tools
 
@@ -196,16 +236,40 @@ When testing MooMoo tools:
 3. Bridge may be offline (TIALA local machine) — test error handling path too
 
 When testing model/LLM config changes:
-1. Verify startup logs show correct provider priorities
-2. Verify `/llm` command output shows correct 3-tier config
+1. Verify startup logs show correct provider priorities (Sakana → Ollama → Gemini)
+2. Verify `/llm` command output shows Ollama tier (NOT Claude)
 3. Verify `/help` text references correct primary model name
 4. Verify natural language triggers correct fallback order via server logs
-5. Verify `aka1LastResponseModel` is updated by all LLM handlers (not just Claude)
+5. Verify `aka1LastResponseModel` is updated by all LLM handlers
 
 When testing tool schema changes:
-1. Verify `toOllamaTools()` produces `{ type: 'function', function: { name, description, parameters } }` for all tools
+1. Verify `toOpenAiFunctionTools()` produces `{ type: 'function', function: { name, description, parameters } }` for all tools
 2. Verify `toGeminiFunctionDeclarations()` produces correct Gemini format
-3. Verify tool count matches `AKA1_TOOLS` array length
+3. Verify tool count matches `AKA1_TOOLS` array length (currently 18)
+
+When testing system operation tools:
+1. Verify `checkPolicy()` returns correct result for each command type
+2. Verify 2-step confirmation flow (no confirmed → confirmation_required, confirmed=true → executed)
+3. **Never call `trigger_job` or `trigger_optuna` with `confirmed=true` in testing** — this would execute real Cloud Scheduler jobs
+
+### TIALA Operation Tools
+
+| Tool | Operation | Policy |
+|---|---|---|
+| `tiala_services` | Query TIALA service statuses (Ollama, OpenD, bridge, etc.) | safe |
+| `tiala_system` | Get CPU/memory/disk/uptime info | safe |
+| `tiala_restart` | Restart a TIALA service | confirm_required |
+| `tiala_exec` | Execute allowlisted command on TIALA | confirm_required |
+
+TIALA tools use the same 2-step confirmation flow as system ops. They call central-dogma (OpenClaw Gateway, port 18789 on TIALA) via `lib/tiala.js`, which discovers the URL from BQ `service_endpoints` (service='central-dogma').
+
+When testing TIALA tools:
+1. Without central-dogma in BQ, `tiala_services`/`tiala_system` throw "central-dogma URL not found in service_endpoints" — test this error path
+2. `tiala_restart`/`tiala_exec` without `confirmed` return `{status: 'confirmation_required'}` — this works without network access
+3. Policy engine: `tiala_restart(opend)` is HIGH RISK (danger message about trade connection), `tiala_exec(git pull)` and `tiala_exec(ollama pull ...)` are HIGH RISK
+4. **Never call `tiala_restart` or `tiala_exec` with `confirmed=true` against real TIALA** — this would restart services or execute commands on the production Mac mini
+5. `/help` should show a TIALA操作 section with examples
+6. URL cache TTL is 1 minute in `lib/tiala.js` — if testing repeated calls, be aware of caching
 
 ## Telegram Webhook Gotchas
 
@@ -227,5 +291,5 @@ Deploy is done by Jun manually via Cloud Shell after PR merge.
 ## Devin Secrets Needed
 
 - `GCP_SERVICE_ACCOUNT_KEY` — GCP service account key for BigQuery access (available as org secret)
-- `ANTHROPIC_API_KEY` — Only needed if testing the full AKA-1 Claude loop (not needed for routing tests or tool testing). **注意: Fable 5 は超高額 ($10/$50 per MTok) のため、テスト回数を最小限に**
+- `SAKANA_API_KEY` — Only needed if testing the full AKA-1 Sakana loop (not needed for routing tests or tool testing)
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Only needed for live Telegram testing
