@@ -43,5 +43,5 @@ jobs:
             --memory=512Mi \
             --timeout=300 \
             --allow-unauthenticated \
-            --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},AKA1_MODEL=claude-fable-5" \
-            --update-secrets="SAKANA_API_KEY=SAKANA_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest"
+            --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
+            --update-secrets="SAKANA_API_KEY=SAKANA_API_KEY:latest,OLLAMA_BASE_URL=OLLAMA_BASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest"
