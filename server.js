@@ -11,9 +11,9 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL;
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:14b';
+const SAKANA_API_KEY = process.env.SAKANA_API_KEY;
 const AKA1_MODEL_RAW = process.env.AKA1_MODEL || 'claude-fable-5';
+const SAKANA_MODEL = process.env.SAKANA_MODEL || 'fugu-ultra';
 
 // Canonical America/New_York (US/Eastern) calendar-date helper, mirroring
 // magi-deep-research/src/nyse.mjs (etDateString) and magi-core/lib/et-date.js.
@@ -142,7 +142,7 @@ const llmHealthState = {};
 // Cloud Run Jobs 状態 state。同上。/jobs コマンドが空のとき「取得中...」と表示するフォールバックを持つ。
 const jobsState = {};
 
-// AKA-1 が最後に使用した実モデル名（Anthropic API レスポンスの model フィールド）
+// AKA-1 が最後に使用した実モデル名（各LLM API レスポンスの model フィールド）
 let aka1LastResponseModel = null;
 
 // ===== Telegram送信ヘルパー =====
@@ -197,13 +197,14 @@ async function sendTypingAction(chatId) {
   } catch (_) { /* ignore typing failures */ }
 }
 
-// ===== AKA-1 (Claude Fable) - 自然言語 Telegram チャット =====
+// ===== AKA-1 (Sakana AI fugu-ultra primary) - 自然言語 Telegram チャット =====
 //
 // 仕様参照: dogmaai/magi-stg/MEMORY.md, specifications/system/overview.md
 // 役割: Telegram で自然文を受け、tool calling で BigQuery を直接照会して応答する。
 //       slash コマンド (/status, /wr, /jobs, /today, /help) は従来通り別経路で処理。
 // 認可: TELEGRAM_CHAT_ID と一致する chat からのメッセージのみ受け付ける。
 // ツール: 読み取り専用の事前定義クエリのみ公開する（任意 SQL は意図的に未公開）。
+// LLM優先順: Sakana AI → Claude → Gemini (non-sticky fallback)
 
 const AKA1_TOOLS = [
   {
@@ -497,8 +498,8 @@ function toGeminiFunctionDeclarations() {
   }));
 }
 
-// Convert Anthropic tool schema to OpenAI/Ollama function calling format
-function toOllamaTools() {
+// Convert Anthropic tool schema to OpenAI function tools (Sakana AI uses OpenAI-compatible API)
+function toOpenAiFunctionTools() {
   return AKA1_TOOLS.map(t => ({
     type: 'function',
     function: {
@@ -509,13 +510,12 @@ function toOllamaTools() {
   }));
 }
 
-async function callOllamaWithTools(userMessage) {
-  if (!OLLAMA_BASE_URL) {
-    throw new Error('OLLAMA_BASE_URL が未設定です');
+async function callSakanaWithTools(userMessage) {
+  if (!SAKANA_API_KEY) {
+    throw new Error('SAKANA_API_KEY が未設定です');
   }
-  const endpoint = `${OLLAMA_BASE_URL}/v1/chat/completions`;
   const systemPrompt =
-    `あなたは MAGI トレーディングシステムの監視 bot「AKA-1」です。モデル: ${OLLAMA_MODEL} (TIALA local)。` +
+    `あなたは MAGI トレーディングシステムの監視 bot「AKA-1」です。モデル: Sakana AI ${SAKANA_MODEL}。` +
     '日本語で簡潔に応答してください。' +
     '取引・勝率・P&L・L4 プロベーション等のデータは必ず提供された tool を使って取得し、推測で答えないこと。' +
     'MAGI Constitution（憲法）は最上位ルールです。get_constitution ツールで取得できます。' +
@@ -530,76 +530,70 @@ async function callOllamaWithTools(userMessage) {
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userMessage }
   ];
-  const tools = toOllamaTools();
+  const tools = toOpenAiFunctionTools();
 
   for (let i = 0; i < AKA1_MAX_TOOL_ITERATIONS; i++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
-
-    let res;
-    try {
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: OLLAMA_MODEL,
-          messages,
-          tools,
-          tool_choice: 'auto',
-          temperature: 0.1,
-          max_tokens: 1024
-        })
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`Ollama API: HTTP ${res.status} ${errBody}`);
-    }
-
+    const res = await fetch('https://api.sakana.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SAKANA_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: SAKANA_MODEL,
+        messages,
+        max_tokens: 1024,
+        tools,
+        tool_choice: 'auto'
+      })
+    });
     const data = await res.json();
-    aka1LastResponseModel = data.model || OLLAMA_MODEL;
-    console.log(`[AKA-1:OLLAMA] response model: ${aka1LastResponseModel}`);
+    if (!res.ok || data.error) {
+      const errMsg = data.error?.message || `HTTP ${res.status}`;
+      throw new Error(`Sakana API: ${errMsg}`);
+    }
+
+    const choice = data.choices?.[0];
+    if (!choice?.message) {
+      return '（Sakana AI から応答がありませんでした）';
+    }
+
+    if (data.model) {
+      aka1LastResponseModel = data.model;
+      console.log(`[AKA-1:SAKANA] API response model: ${data.model}`);
+    }
     if (data.usage) {
-      console.log(`[AKA-1:OLLAMA] tokens: in=${data.usage.prompt_tokens || 0} out=${data.usage.completion_tokens || 0}`);
+      const u = data.usage;
+      console.log(`[AKA-1:SAKANA] tokens: in=${u.prompt_tokens} out=${u.completion_tokens} total=${u.total_tokens}`);
     }
 
-    const message = data.choices?.[0]?.message;
-    if (!message) {
-      return '（Ollama から応答がありませんでした）';
+    messages.push(choice.message);
+
+    if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
+      return (choice.message.content || '').trim() || '（応答が空でした）';
     }
 
-    // No tool calls → final text response
-    if (!message.tool_calls || message.tool_calls.length === 0) {
-      return (message.content || '').trim() || '（応答が空でした）';
-    }
-
-    // Process tool calls
-    messages.push(message);
-    for (const tc of message.tool_calls) {
+    for (const tc of choice.message.tool_calls) {
       const fnName = tc.function.name;
-      // Some Ollama models may not return tool_call_id; generate a fallback
-      const tcId = tc.id || `call_${fnName}_${i}`;
-      let fnArgs = tc.function.arguments;
-      if (typeof fnArgs === 'string') {
-        try { fnArgs = JSON.parse(fnArgs); } catch (_) { fnArgs = {}; }
+      let fnArgs;
+      try {
+        fnArgs = JSON.parse(tc.function.arguments);
+      } catch {
+        fnArgs = {};
       }
-      console.log(`[AKA-1:OLLAMA] tool=${fnName} input=${JSON.stringify(fnArgs)}`);
+      console.log(`[AKA-1:SAKANA] tool=${fnName} input=${JSON.stringify(fnArgs)}`);
       try {
         const result = await executeAka1Tool(fnName, fnArgs);
         messages.push({
           role: 'tool',
-          tool_call_id: tcId,
+          tool_call_id: tc.id,
           content: JSON.stringify(result)
         });
       } catch (e) {
-        console.error(`[AKA-1:OLLAMA] tool error: ${e.message}`);
+        console.error(`[AKA-1:SAKANA] tool error: ${e.message}`);
         messages.push({
           role: 'tool',
-          tool_call_id: tcId,
+          tool_call_id: tc.id,
           content: `Error: ${e.message}`
         });
       }
@@ -1155,16 +1149,15 @@ async function handleBotCommand(chatId, text) {
   const cmd = text.split(' ')[0].toLowerCase().replace('@magi_claw_bot', '');
 
   if (cmd === '/help' || cmd === '/start') {
-    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/llm     - AKA-1 の現在の LLM 設定\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / Ollama ${OLLAMA_MODEL}) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
+    return sendTelegramTo(chatId, `[MAGI Monitor] コマンド一覧\n\n/status  - LLM API死活 + 本日サマリー\n/wr      - LLM x 方向別勝率テーブル\n/jobs    - Cloud Run Jobs状態\n/today   - 本日の取引一覧\n/llm     - AKA-1 の現在の LLM 設定\n/help    - このメッセージ\n\n📝 自然文での質問 (AKA-1 / Sakana AI ${SAKANA_MODEL}) にも対応しています。\n例: 「直近1週間のGroqの勝率は？」「今日のWIN件数を教えて」`);
   }
 
   if (cmd === '/llm') {
-    const ollama = OLLAMA_BASE_URL ? `✓ ${OLLAMA_MODEL} (TIALA)` : '✗ OLLAMA_BASE_URL 未設定';
+    const sakana = SAKANA_API_KEY ? `✓ ${SAKANA_MODEL}` : '✗ SAKANA_API_KEY 未設定';
     const claude = ANTHROPIC_API_KEY ? `✓ ${AKA1_MODEL}` : '✗ ANTHROPIC_API_KEY 未設定';
     const gemini = GEMINI_API_KEY ? `✓ ${GEMINI_FALLBACK_MODEL}` : '✗ GEMINI_API_KEY 未設定';
-    const normalized = AKA1_MODEL_RAW !== AKA1_MODEL ? `\n正規化: "${AKA1_MODEL_RAW}" → "${AKA1_MODEL}"` : '';
     const actual = aka1LastResponseModel ? `\n実モデル (API確認): ${aka1LastResponseModel}` : '\n実モデル: まだ応答なし（自然文を送ると記録されます）';
-    return sendTelegramTo(chatId, `[AKA-1] LLM 設定\n\nPrimary: Ollama — ${ollama}\nFallback 1: Claude — ${claude}\nFallback 2: Gemini — ${gemini}${normalized}${actual}\n\n※ Ollama (TIALA) を常に優先。失敗時 Claude → Gemini の順でフォールバック。`);
+    return sendTelegramTo(chatId, `[AKA-1] LLM 設定\n\nPrimary: Sakana AI — ${sakana}\nFallback 1: Claude — ${claude}\nFallback 2: Gemini — ${gemini}${actual}\n\n※ Sakana AI を常に優先。失敗時は Claude → Gemini の順にフォールバック。`);
   }
 
   if (cmd === '/status') {
@@ -1241,24 +1234,24 @@ async function handleBotCommand(chatId, text) {
 }
 
 // ===== AKA-1 自然言語ハンドラー =====
-// Ollama (TIALA) primary → Claude fallback → Gemini fallback (non-sticky: always tries Ollama first)
+// Sakana AI primary → Claude fallback → Gemini secondary fallback (non-sticky: always tries Sakana first)
 async function handleAka1Chat(chatId, text) {
   await sendTypingAction(chatId);
   console.log(`[AKA-1] chat=${chatId} text="${text}"`);
   const errors = [];
 
-  // Try Ollama (primary — TIALA local, zero cost)
-  if (OLLAMA_BASE_URL) {
+  // Try Sakana AI (primary)
+  if (SAKANA_API_KEY) {
     try {
-      const answer = await callOllamaWithTools(text);
+      const answer = await callSakanaWithTools(text);
       await sendTelegramTo(chatId, answer, { parseMode: 'Markdown' });
       return;
     } catch (e) {
-      errors.push(`Ollama(${OLLAMA_MODEL}): ${e.message}`);
-      console.error(`[AKA-1] Ollama (${OLLAMA_MODEL}) error, trying Claude fallback:`, e.message);
+      errors.push(`Sakana(${SAKANA_MODEL}): ${e.message}`);
+      console.error(`[AKA-1] Sakana (${SAKANA_MODEL}) error, trying Claude fallback:`, e.message);
     }
   } else {
-    console.log('[AKA-1] OLLAMA_BASE_URL not set, skipping Ollama');
+    console.log('[AKA-1] SAKANA_API_KEY not set, trying Claude fallback');
   }
 
   // Claude fallback
@@ -1272,10 +1265,10 @@ async function handleAka1Chat(chatId, text) {
       console.error(`[AKA-1] Claude (${AKA1_MODEL}) error, trying Gemini fallback:`, e.message);
     }
   } else {
-    console.log('[AKA-1] ANTHROPIC_API_KEY not set, skipping Claude');
+    console.log('[AKA-1] ANTHROPIC_API_KEY not set, trying Gemini fallback');
   }
 
-  // Gemini fallback
+  // Gemini secondary fallback
   if (GEMINI_API_KEY) {
     try {
       const answer = await callGeminiWithTools(text);
@@ -1287,11 +1280,10 @@ async function handleAka1Chat(chatId, text) {
     }
   }
 
-  // All failed
   if (errors.length > 0) {
     await sendTelegramTo(chatId, `[AKA-1 エラー] 全 LLM 失敗:\n${errors.join('\n')}`);
   } else {
-    await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定です。OLLAMA_BASE_URL / ANTHROPIC_API_KEY / GEMINI_API_KEY のいずれかを設定してください。');
+    await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定です。SAKANA_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY のいずれかを設定してください。');
   }
 }
 
@@ -1330,7 +1322,7 @@ app.post('/webhook/telegram', async (req, res) => {
       return;
     }
 
-    if (!OLLAMA_BASE_URL && !ANTHROPIC_API_KEY && !GEMINI_API_KEY) {
+    if (!SAKANA_API_KEY && !ANTHROPIC_API_KEY && !GEMINI_API_KEY) {
       console.log('[BOT] Natural language received but no LLM API key set, ignoring');
       await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定のため自然言語応答は無効です。/help で利用可能なコマンドを確認してください。');
       return;
@@ -1371,7 +1363,7 @@ app.post('/setup/webhook', async (req, res) => {
 });
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`MAGI Monitoring v3.0 on port ${PORT}`);
-  console.log(`[AKA-1] Primary: Ollama ${OLLAMA_MODEL} (${OLLAMA_BASE_URL ? 'configured' : 'NOT configured'})`);
-  console.log(`[AKA-1] Fallback 1: Claude ${AKA1_MODEL}${AKA1_MODEL_RAW !== AKA1_MODEL ? ` (raw: "${AKA1_MODEL_RAW}")` : ''}`);
-  console.log(`[AKA-1] Fallback 2: Gemini ${GEMINI_FALLBACK_MODEL}`);
+  console.log(`[AKA-1] Primary: SAKANA_MODEL="${SAKANA_MODEL}" (key ${SAKANA_API_KEY ? 'set' : 'NOT set'})`);
+  console.log(`[AKA-1] Fallback 1: AKA1_MODEL="${AKA1_MODEL}"${AKA1_MODEL_RAW !== AKA1_MODEL ? ` (raw: "${AKA1_MODEL_RAW}")` : ''} (key ${ANTHROPIC_API_KEY ? 'set' : 'NOT set'})`);
+  console.log(`[AKA-1] Fallback 2: GEMINI_FALLBACK_MODEL="${GEMINI_FALLBACK_MODEL}" (key ${GEMINI_API_KEY ? 'set' : 'NOT set'})`);
 });
