@@ -44,4 +44,4 @@ jobs:
             --timeout=300 \
             --allow-unauthenticated \
             --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},AKA1_MODEL=claude-fable-5" \
-            --update-secrets="OLLAMA_BASE_URL=OLLAMA_BASE_URL:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest"
+            --update-secrets="SAKANA_API_KEY=SAKANA_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest"
