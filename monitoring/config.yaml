@@ -106,13 +106,14 @@ monitoring:
         slot_usage_critical_percent: 95
 
     # 🟣 magi-ac (Cloud Functions - Analytics)
+    # archived (miroqu369/magi-ac public archive) — サービス廃止のため監視停止
     - name: magi-ac
       type: cloud_function
-      enabled: true
+      enabled: false
       project_id: screen-share-459802
       function_name: magi-analytics-processor
       interval: 60
-      critical: true
+      critical: false
       
       thresholds:
         execution_time_warning_sec: 120

@@ -6,7 +6,7 @@ MAGI System 全体の監視、ログ、アラート管理を行う Infrastructur
 
 - ✅ Cloud Run (magi-core) 監視
 - ✅ BigQuery (magi-stg) 監視
-- ✅ Cloud Functions (magi-ac) 監視
+- ⚠️ Cloud Functions (magi-ac) 監視 — アーカイブ済み・監視停止
 - ✅ Cloud Logging 集約
 - ✅ SLA 追跡
 - ✅ アラート通知 (Email/Slack)
@@ -22,9 +22,8 @@ MAGI System 全体の監視、ログ、アラート管理を行う Infrastructur
    - テーブルヘルス、クエリ性能
    - 間隔: 5分
 
-3. **magi-ac** (Analytics)
-   - 実行時間、エラー、メモリ
-   - 間隔: 1分
+3. **magi-ac** (Analytics) — ⚠️ アーカイブ済み（`miroqu369/magi-ac` public archive）・監視停止
+   - `enabled: false` に設定済み（旧: 実行時間・エラー・メモリ、間隔 1分）
 
 4. **magi-ui** (UI)
    - レスポンス時間、可用性
@@ -103,6 +102,6 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 
 - [magi-core](https://github.com/miroqu369/magi-core)
 - [magi-stg](https://github.com/miroqu369/magi-stg)
-- [magi-ac](https://github.com/miroqu369/magi-ac)
+- [magi-ac](https://github.com/miroqu369/magi-ac) — ⚠️ アーカイブ済み・監視停止
 - [magi-ui](https://github.com/miroqu369/magi-ui)
 
