@@ -258,15 +258,17 @@ When testing system operation tools:
 |---|---|---|
 | `tiala_services` | Query TIALA service statuses (Ollama, OpenD, bridge, etc.) | safe |
 | `tiala_system` | Get CPU/memory/disk/uptime info | safe |
-| `tiala_screenshot` | Capture TIALA screen (computer tool → screencapture fallback) | safe |
+| `tiala_screenshot` | Capture TIALA screen via `screencapture` and send it to Telegram as a JPEG | safe |
 | `tiala_restart` | Restart a TIALA service | confirm_required |
 | `tiala_exec` | Execute allowlisted command on TIALA | confirm_required |
 | `tiala_action` | Perform a GUI action on TIALA (click/type/key/scroll/etc.) | confirm_required |
-| `openclaw_agent` | Delegate a task to the OpenClaw agent (Sonnet 5) with screen/computer tools | confirm_required |
+| `openclaw_agent` | Delegate a task to the OpenClaw agent (Sonnet 5) using exec/browser tools | confirm_required |
 
 TIALA tools use the same 2-step confirmation flow as system ops. They call the OpenClaw Gateway on TIALA (port 18789) via `lib/openclaw.js`, which discovers the URL from BQ `service_endpoints` (service='openclaw').
 
-`openclaw_agent` uses the OpenClaw Gateway `/v1/chat/completions` endpoint. It requires `gateway.http.endpoints.chatCompletions.enabled: true` in `~/.openclaw/openclaw.json`. The docs warn against exposing this endpoint to the public internet; prefer Tailscale/private ingress when possible.
+`openclaw_agent` uses the OpenClaw Gateway `/v1/chat/completions` endpoint. It requires `gateway.http.endpoints.chatCompletions.enabled: true` in `~/.openclaw/openclaw.json`. The docs warn against exposing this endpoint to the public internet; prefer Tailscale/private ingress when possible. Note: screen viewing through this agent requires an OpenClaw `computer` node; for TIALA screen control use `tiala_screenshot` + `tiala_action`.
+
+`tiala_screenshot` and `tiala_action` no longer require a paired OpenClaw `computer` node. They use `exec` on the gateway host to run macOS `screencapture` and `osascript` / `cliclick`. The full screenshot base64 is cached in `lib/tiala.js` and sent to the Telegram chat by `handleAka1Chat` after the LLM response.
 
 When testing TIALA tools:
 1. Without `openclaw` in BQ, `tiala_services`/`tiala_system`/`tiala_screenshot` throw "OpenClaw URL not found in service_endpoints" — test this error path
