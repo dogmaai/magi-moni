@@ -40,7 +40,7 @@ The codebase is split into focused modules under `lib/`:
 | `lib/moomoo.js` | magi-moomoo Cloud Run proxy client (OIDC) |
 | `lib/tiala.js` | TIALA operation handlers via OpenClaw Gateway tool invocation |
 | `lib/policy-engine.js` | `checkPolicy()` for system operations |
-| `lib/tools.js` | `AKA1_TOOLS[20]` + `executeAka1Tool` + format converters |
+| `lib/tools.js` | `AKA1_TOOLS[21]` + `executeAka1Tool` + format converters |
 | `lib/llm.js` | `callSakana/Ollama/GeminiWithTools` + `handleAka1Chat` |
 | `lib/commands.js` | Slash command handler (`handleBotCommand`) |
 | `lib/reports.js` | Daily/weekly report generators |
@@ -262,7 +262,7 @@ When testing system operation tools:
 | `tiala_restart` | Restart a TIALA service | confirm_required |
 | `tiala_exec` | Execute allowlisted command on TIALA | confirm_required |
 | `tiala_action` | Perform a GUI action on TIALA (click/type/key/scroll/etc.) | confirm_required |
-| `openclaw_agent` | Delegate a task to the OpenClaw agent (Sonnet 5) with screen/computer tools | safe |
+| `openclaw_agent` | Delegate a task to the OpenClaw agent (Sonnet 5) with screen/computer tools | confirm_required |
 
 TIALA tools use the same 2-step confirmation flow as system ops. They call the OpenClaw Gateway on TIALA (port 18789) via `lib/openclaw.js`, which discovers the URL from BQ `service_endpoints` (service='openclaw').
 
@@ -270,9 +270,9 @@ TIALA tools use the same 2-step confirmation flow as system ops. They call the O
 
 When testing TIALA tools:
 1. Without `openclaw` in BQ, `tiala_services`/`tiala_system`/`tiala_screenshot` throw "OpenClaw URL not found in service_endpoints" — test this error path
-2. `tiala_restart`/`tiala_exec`/`tiala_action` without `confirmed` return `{status: 'confirmation_required'}` — this works without network access
+2. `tiala_restart`/`tiala_exec`/`tiala_action`/`openclaw_agent` without `confirmed` return `{status: 'confirmation_required'}` — this works without network access
 3. Policy engine: `tiala_restart(opend)` is HIGH RISK (danger message about trade connection), `tiala_exec(git pull)` and `tiala_exec(ollama pull ...)` are HIGH RISK
-4. **Never call `tiala_restart`, `tiala_exec`, or `tiala_action` with `confirmed=true` against real TIALA** — this would restart services, execute commands, or control the GUI on the production Mac mini
+4. **Never call `tiala_restart`, `tiala_exec`, `tiala_action`, or `openclaw_agent` with `confirmed=true` against real TIALA** — this would restart services, execute commands, control the GUI, or run an autonomous agent on the production Mac mini
 5. `/help` should show a TIALA操作 section with examples
 6. URL cache TTL is 1 minute in `lib/openclaw.js` — if testing repeated calls, be aware of caching
 
