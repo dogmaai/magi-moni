@@ -2,13 +2,15 @@
  * MAGI Monitoring Service — server.js (entry point)
  *
  * Telegram Bot (@magi_claw_bot) + AKA-1 agent + reporting.
- * Unified from magi-moni + central-dogma (magi-gateway) into a single bot.
+ * magi-moni serves Telegram bot + AKA-1 agent. TIALA remote operations use OpenClaw Gateway.
  *
  * Modules:
  *   lib/config.js        — env vars, constants
  *   lib/telegram.js      — Telegram send helpers
  *   lib/bigquery.js      — BQ client + runQuery
  *   lib/moomoo.js        — magi-moomoo proxy client
+ *   lib/openclaw.js      — OpenClaw Gateway client for TIALA remote ops
+ *   lib/tiala.js         — TIALA service/exec/system/screenshot/action handlers
  *   lib/policy-engine.js — policy checks for system operations
  *   lib/tools.js         — AKA-1 tool definitions + handlers
  *   lib/llm.js           — LLM callers (Sakana/Ollama/Gemini) + handleAka1Chat
