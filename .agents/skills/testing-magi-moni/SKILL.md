@@ -11,7 +11,7 @@ magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 - Telegram bot webhook for slash commands and natural language chat (AKA-1)
 - Modular architecture: `lib/config.js`, `lib/tools.js`, `lib/llm.js`, `lib/commands.js`, `lib/reports.js`, etc.
 - AKA-1 uses Sakana AI (fugu-ultra) as primary LLM with tool calling
-- 3-tier fallback chain: Sakana AI → Ollama (TIALA local qwen2.5:14b) → Gemini 2.5 Flash (non-sticky: always tries Sakana first)
+- 3-tier fallback chain: Sakana AI → Ollama (TIALA local qwen3.5:9b) → Gemini 2.5 Flash (non-sticky: always tries Sakana first)
 - 21 tools total: 6 BQ read + 5 MooMoo + 6 TIALA ops + 1 OpenClaw agent + 3 system ops
 - Pub/Sub endpoint for trade result ingestion
 
@@ -20,7 +20,7 @@ magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 | Priority | Provider | Model | Env Var | Cost |
 |---|---|---|---|---|
 | Primary | Sakana AI | fugu-ultra | `SAKANA_API_KEY` | Moderate |
-| Fallback 1 | Ollama (TIALA) | qwen2.5:14b | `OLLAMA_BASE_URL` | Zero (local) |
+| Fallback 1 | Ollama (TIALA) | qwen3.5:9b | `OLLAMA_BASE_URL` | Zero (local) |
 | Fallback 2 | Gemini | gemini-2.5-flash | `GEMINI_API_KEY` | Low cost |
 
 ### Cost Notes
@@ -155,8 +155,8 @@ curl -s -X POST http://localhost:8090/webhook/telegram \
 | Gemini attempted (dummy key) | `Gemini API: API key not valid` |
 | All LLMs failed | `[AKA-1 エラー] 全 LLM 失敗:` |
 | No LLM keys set | `[BOT] Natural language received but no LLM API key set, ignoring` |
-| Startup (Ollama configured) | `Fallback 1: Ollama qwen2.5:14b (configured)` |
-| Startup (Ollama NOT configured) | `Fallback 1: Ollama qwen2.5:14b (NOT configured)` |
+| Startup (Ollama configured) | `Fallback 1: Ollama qwen3.5:9b (configured)` |
+| Startup (Ollama NOT configured) | `Fallback 1: Ollama qwen3.5:9b (NOT configured)` |
 
 ## Testing AKA-1 Tools Locally
 

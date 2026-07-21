@@ -88,7 +88,7 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 | `SAKANA_API_KEY` | AKA-1 プライマリ LLM (Sakana AI fugu-ultra) |
 | `SAKANA_MODEL` | 任意。デフォルト `fugu-ultra` |
 | `OLLAMA_BASE_URL` | Fallback 1: Ollama (TIALA local Qwen) エンドポイント |
-| `OLLAMA_MODEL` | 任意。デフォルト `qwen2.5:14b` |
+| `OLLAMA_MODEL` | 任意。デフォルト `qwen3.5:9b` |
 | `GEMINI_API_KEY` | Fallback 2: Gemini |
 | `PROJECT_ID` | GCP project (default: `screen-share-459802`) |
 
