@@ -18,17 +18,18 @@
  *   node scripts/operate-tiala.js agent "Safariを開いてdogma.jpを表示して" --confirm
  */
 
-const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 // Set up GCP credentials from the environment variable used by Devin snapshots.
+// Use a stable filename so repeated invocations do not pile up files in the
+// home directory. A fixed path in the user's home dir is safe with 0o600.
 const gcpKeyJson = process.env.GCP_SERVICE_ACCOUNT_KEY;
 if (gcpKeyJson && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
   const keyFile = process.env.GCP_KEY_FILE || path.join(
     os.homedir(),
-    `.magi-moni-gcp-${crypto.randomUUID()}.json`
+    '.magi-moni-gcp.json'
   );
   fs.writeFileSync(keyFile, gcpKeyJson, { mode: 0o600 });
   process.env.GOOGLE_APPLICATION_CREDENTIALS = keyFile;
@@ -40,6 +41,8 @@ const {
   getScreenshot,
 } = require('../lib/tiala');
 const { executeAka1Tool } = require('../lib/tools');
+
+const BOOLEAN_FLAGS = new Set(['confirm', 'json']);
 
 function parseArgs(argv) {
   const positional = [];
@@ -55,7 +58,9 @@ function parseArgs(argv) {
         value = arg.slice(eq + 1);
       } else {
         key = arg.slice(2);
-        if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
+        if (BOOLEAN_FLAGS.has(key)) {
+          value = true;
+        } else if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
           value = argv[++i];
         } else {
           value = true;
