@@ -60,8 +60,8 @@ magi-moni/
 - **Email**: devops@example.com
 - **Slack**: #magi-alerts, #magi-critical
 - **SMS**: CRITICAL アラートのみ (オプション)
-- **Telegram**: `@magi_trading_bot` 経由 (`POST /webhook/telegram`)
-  - 旧 `@magi_claw_bot` は廃止/リネーム済み
+- **Telegram**: `@magi_claw_bot` 経由 (`POST /webhook/telegram`)
+  - `@magi_trading_bot` は現在未使用
 
 ## 🤖 Telegram bot エージェント
 
