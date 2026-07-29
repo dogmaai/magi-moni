@@ -1,7 +1,7 @@
 /**
  * MAGI Monitoring Service — server.js (entry point)
  *
- * Telegram Bot (@magi_claw_bot) + AKA-1 agent + reporting.
+ * Telegram Bot (actual: @magi_trading_bot; legacy: @magi_claw_bot) + AKA-1 agent + reporting.
  * magi-moni serves Telegram bot + AKA-1 agent. TIALA remote operations use OpenClaw Gateway.
  *
  * Modules:
@@ -154,7 +154,7 @@ app.post('/webhook/telegram', async (req, res) => {
       return;
     }
 
-    const text = message.text.replace(/@magi_claw_bot/gi, '').trim();
+    const text = message.text.replace(/@magi_[a-z0-9_]*_bot\b/gi, '').trim();
     if (!text) return;
 
     if (text.startsWith('/')) {
