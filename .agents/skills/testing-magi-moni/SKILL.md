@@ -5,6 +5,16 @@ description: Test AKA-1 Telegram bot tools locally against real BigQuery and Moo
 
 # Testing magi-moni (AKA-1)
 
+## BigQuery DDL / DML tips
+
+- To create tables from magi-core `sql/*.sql` DDL files, pipe the file via stdin:
+  `bq query --project_id=screen-share-459802 --location=US --use_legacy_sql=false < sql/create_xxx.sql`.
+  Do NOT use `"$(cat file.sql)"` — the backticks in BigQuery identifiers get executed by the shell and mangle the query.
+- The HERMES focus tables (`magi_core.focus_symbols`, `magi_core.manual_focus_symbols`) may not exist in a fresh environment; both DDLs live in magi-core `sql/` and are `CREATE TABLE IF NOT EXISTS` (idempotent, safe to run).
+- When testing focus-symbol tools, use fake tickers (e.g. ZZTA) and clean up with
+  `DELETE FROM magi_core.manual_focus_symbols WHERE symbol IN (...)` afterwards — production HERMES reads active rows from this table.
+- `export` of env vars may not persist across separate exec calls even in the same shell session; pass `GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json` inline on each command to be safe.
+
 ## Overview
 
 magi-moni is a Cloud Run **service** (not a job) running an Express server with:
