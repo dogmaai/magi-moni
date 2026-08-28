@@ -13,7 +13,8 @@ OpenClaw Gateway). Devin can operate it through `magi-moni`'s OpenClaw client.
 - `magi-moni` repo is cloned and `npm install` has run.
 - `GCP_SERVICE_ACCOUNT_KEY` and `OPENCLAW_GATEWAY_TOKEN` are available.
 - The OpenClaw Gateway URL is discoverable from BigQuery `magi_core.service_endpoints`
-  (`service = 'openclaw'`) or set explicitly in `OPENCLAW_URL`.
+  (`service = 'openclaw'`) or set explicitly in `OPENCLAW_URL`. The current value is
+  `https://openclaw.khaos.company` (Cloudflare Named Tunnel).
 - If the `openclaw` URL is a stale `*.trycloudflare.com` quick tunnel, TIALA needs a
   Cloudflare Named Tunnel. On TIALA, run:
 
@@ -55,6 +56,49 @@ node scripts/operate-tiala.js action --action=scroll --coordinate=500,300 --dire
 # Delegate a task to the OpenClaw agent
 node scripts/operate-tiala.js agent "Safariを開いてdogma.jpを表示して" --confirm
 ```
+
+## HTTP 401 Unauthorized
+
+The gateway token rotates on TIALA and the copy stored on the Devin side goes stale.
+The **source of truth is GCP Secret Manager**, not the injected environment variable:
+
+```bash
+gcloud auth activate-service-account --key-file=/home/ubuntu/gcp-key.json --project=screen-share-459802
+export OPENCLAW_GATEWAY_TOKEN=$(gcloud secrets versions access latest \
+  --secret=OPENCLAW_GATEWAY_TOKEN --project=screen-share-459802)
+node scripts/operate-tiala.js services
+```
+
+Diagnosis order:
+
+1. `curl -s https://openclaw.khaos.company/health` → `{"ok":true,"status":"live"}` means the
+   host and tunnel are fine and the problem is purely the token.
+2. A request that authenticates but hits a tool missing from the HTTP catalog returns
+   `404`, not `401` — a 404 already proves the token is good.
+3. If `/health` itself fails, the tunnel is down; see the Named Tunnel commands above.
+
+After recovering a token, suggest saving it back as the org-scoped
+`OPENCLAW_GATEWAY_TOKEN` secret so later sessions do not repeat this.
+
+## Reaching TIALA without the gateway
+
+TIALA is on the dogmaai tailnet as `aka` / `aka.aegean-boa.ts.net` / `100.114.185.1`.
+Joining the tailnet is useful to prove the host is up when the gateway is unusable:
+
+```bash
+sudo tailscale up --authkey="$TAILSCALE_KEY" --hostname=devin-tiala --accept-routes
+ping -c2 100.114.185.1
+curl -s http://100.114.185.1:11436/health   # moomoo bridge answers over Tailscale
+```
+
+Notes:
+
+- Multiple Tailscale auth-key secrets exist and most are expired — try each until
+  `tailscale status` lists `aka`.
+- The gateway port `18789` accepts TCP over Tailscale but never answers HTTP; go through
+  the `openclaw.khaos.company` tunnel instead.
+- `sshd` on port 22 is up but rejects Devin (publickey only) and Tailscale SSH is not
+  enabled, so there is no shell fallback — the gateway is the only way in.
 
 ## Safety
 
