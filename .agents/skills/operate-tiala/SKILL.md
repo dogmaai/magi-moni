@@ -16,10 +16,11 @@ OpenClaw Gateway). Devin can operate it through `magi-moni`'s OpenClaw client.
   (`service = 'openclaw'`) or set explicitly in `OPENCLAW_URL`. The current value is
   `https://openclaw.khaos.company` (Cloudflare Named Tunnel).
 - If the `openclaw` URL is a stale `*.trycloudflare.com` quick tunnel, TIALA needs a
-  Cloudflare Named Tunnel. On TIALA, run:
+  Cloudflare Named Tunnel. The tunnel scripts live in the `dogmaai/magi-moomoo` repo
+  (`scripts/`), not in this repo. On TIALA, run:
 
 ```bash
-cd ~/magi-moomoo
+cd ~/magi-moomoo   # dogmaai/magi-moomoo checkout on TIALA
 bash scripts/setup-openclaw-named-tunnel.sh openclaw.khaos.company
 bash scripts/start-openclaw-named-tunnel.sh
 # or install as LaunchAgent:
