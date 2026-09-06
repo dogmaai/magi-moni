@@ -76,7 +76,7 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
      - `get_today_trades` — 本日の取引一覧
      - `get_winrate_by_llm` — LLM × 方向別勝率（過去 N 日）
      - `get_daily_summary` — 指定日のサマリー
-     - `get_l4_probation` — L4 プロベーション状態
+     - `get_l4_status` — L4（方向適性層, warn-only）の警告状況
    - 任意 SQL は意図的に未公開（事前定義クエリのみ）
    - 仕様参照: [`dogmaai/magi-stg`](https://github.com/dogmaai/magi-stg) の `MEMORY.md` / `specifications/system/overview.md`
 
