@@ -191,7 +191,7 @@ executeAka1Tool('get_winrate_by_llm', { days: 7 })
 | `get_today_trades` | Today's trades | `magi_core.trades_active` |
 | `get_winrate_by_llm` | LLM win rates | `magi_core.trades_active` |
 | `get_daily_summary` | Daily summary | `magi_core.trades_active` |
-| `get_l4_probation` | L4 blocks | `magi_core.l4_probation` |
+| `get_l4_status` | L4 warnings (warn-only) | `magi_core.thoughts` (`concerns='L4'`) |
 | `get_constitution` | MAGI Constitution | `magi_core.constitution` |
 | `query_thoughts` | PLM thought logs | `magi_core.thoughts_active` |
 
@@ -203,7 +203,6 @@ All BigQuery queries use `location: 'US'` (magi_core dataset is in US region).
 
 | Tool | Operation | Policy |
 |---|---|---|
-| `unblock_l4` | Delete from `l4_probation` table | confirm_required |
 | `trigger_job` | Run Cloud Scheduler job via API | confirm_required |
 | `trigger_optuna` | Shortcut for `trigger_job('magi-optuna-optimizer')` | confirm_required |
 
