@@ -63,6 +63,14 @@ completion report must state:
 
 "Checked the OKF" alone is not sufficient — name the revision and paths.
 
+Exception — strict output schemas: when a tool or workflow requires a
+strict machine-readable output schema (for example a review runner that
+expects an exact `{"findings": [...]}` response), honour that schema and
+do not break it. Record the required OKF fields (referenced commit SHA,
+file paths, etc.) in the PR description, a PR comment, logs, or another
+available reporting channel instead. The OKF check itself is never
+skipped.
+
 ### Boundaries — never change without consulting the OKF and Jun
 
 - trade guards, order execution, trading modes, risk configuration;
