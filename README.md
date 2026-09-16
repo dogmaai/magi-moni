@@ -78,7 +78,7 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
      - `get_daily_summary` — 指定日のサマリー
      - `get_l4_status` — L4（方向適性層, warn-only）の警告状況
    - 任意 SQL は意図的に未公開（事前定義クエリのみ）
-   - 仕様参照: [`dogmaai/magi-stg`](https://github.com/dogmaai/magi-stg) の `MEMORY.md` / `specifications/system/overview.md`
+   - 仕様参照: [`dogmaai/magi-knowledge`](https://github.com/dogmaai/magi-knowledge) の `index.md` / `system/services/magi-moni.md`（`dogmaai/magi-stg` はアーカイブ済み・仕様参照禁止。BigQuery `magi-stg` データセット監視は稼働対象として継続）
 
 ### 必要な環境変数
 
