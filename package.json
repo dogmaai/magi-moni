@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "test": "node --test lib/__tests__/"
+    "test": "node --test lib/__tests__/*.test.js"
   },
   "engines": {
     "node": "18.x"
