@@ -70,7 +70,7 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 1. **Slash コマンド** (`/status` `/wr` `/jobs` `/today` `/help`)
    - 固定 BigQuery クエリを叩いて整形済みテキストを返す（従来機能）
 
-2. **自然文** → **AKA-1 (Sakana AI fugu-ultra primary, Ollama/Gemini fallback) + tool calling**
+2. **自然文** → **AKA-1 (Gemini `gemini-3.8-flash`) + tool calling**
    - 認可: `TELEGRAM_CHAT_ID` と一致する chat のみ応答
    - 利用ツール (読み取り専用):
      - `get_today_trades` — 本日の取引一覧
@@ -86,11 +86,8 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot 認証 |
 | `TELEGRAM_CHAT_ID` | 応答先・認可元の Telegram chat ID |
-| `SAKANA_API_KEY` | AKA-1 プライマリ LLM (Sakana AI fugu-ultra) |
-| `SAKANA_MODEL` | 任意。デフォルト `fugu-ultra` |
-| `OLLAMA_BASE_URL` | Fallback 1: Ollama (TIALA local Qwen) エンドポイント |
-| `OLLAMA_MODEL` | 任意。デフォルト `qwen3.5:9b` |
-| `GEMINI_API_KEY` | Fallback 2: Gemini |
+| `GEMINI_API_KEY` | AKA-1 LLM (Gemini) |
+| `GEMINI_MODEL` | 任意。デフォルト `gemini-3.8-flash` |
 | `PROJECT_ID` | GCP project (default: `screen-share-459802`) |
 
 ## 📈 SLA 目標

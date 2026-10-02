@@ -20,8 +20,8 @@ description: Test AKA-1 Telegram bot tools locally against real BigQuery and Moo
 magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 - Telegram bot webhook for slash commands and natural language chat (AKA-1)
 - Modular architecture: `lib/config.js`, `lib/tools.js`, `lib/llm.js`, `lib/commands.js`, `lib/reports.js`, etc.
-- AKA-1 uses Sakana AI (fugu-ultra) as primary LLM with tool calling
-- 3-tier fallback chain: Sakana AI → Ollama (TIALA local qwen3.5:9b) → Gemini 2.5 Flash (non-sticky: always tries Sakana first)
+- AKA-1 uses Gemini (gemini-3.8-flash) as its sole LLM with tool calling
+- Sakana AI (fugu) and the Ollama (TIALA) fallback were removed 2026-10-02 — Gemini is the only provider
 - 21 tools total: 6 BQ read + 5 MooMoo + 6 TIALA ops + 1 OpenClaw agent + 3 system ops
 - Pub/Sub endpoint for trade result ingestion
 
@@ -29,14 +29,11 @@ magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 
 | Priority | Provider | Model | Env Var | Cost |
 |---|---|---|---|---|
-| Primary | Sakana AI | fugu-ultra | `SAKANA_API_KEY` | Moderate |
-| Fallback 1 | Ollama (TIALA) | qwen3.5:9b | `OLLAMA_BASE_URL` | Zero (local) |
-| Fallback 2 | Gemini | gemini-2.5-flash | `GEMINI_API_KEY` | Low cost |
+| Sole | Gemini | gemini-3.8-flash | `GEMINI_API_KEY` | Low cost |
 
 ### Cost Notes
-- Ollama is zero-cost (local inference on TIALA hardware via Cloudflare Tunnel)
 - Slash commands (`/status`, `/wr`, `/jobs`, `/today`, `/llm`, `/help`) never invoke any LLM
-- テスト時に実 SAKANA_API_KEY で自然言語チャットを送ると課金が発生するため注意
+- テスト時に実 GEMINI_API_KEY で自然言語チャットを送ると課金が発生するため注意
 
 ## Modular Architecture (v4.0+)
 
@@ -51,7 +48,7 @@ The codebase is split into focused modules under `lib/`:
 | `lib/tiala.js` | TIALA operation handlers via OpenClaw Gateway tool invocation |
 | `lib/policy-engine.js` | `checkPolicy()` for system operations |
 | `lib/tools.js` | `AKA1_TOOLS[21]` + `executeAka1Tool` + format converters |
-| `lib/llm.js` | `callSakana/Ollama/GeminiWithTools` + `handleAka1Chat` |
+| `lib/llm.js` | `callGeminiWithTools` + `handleAka1Chat` |
 | `lib/commands.js` | Slash command handler (`handleBotCommand`) |
 | `lib/reports.js` | Daily/weekly report generators |
 | `server.js` | ~200 line Express entry point |
@@ -116,23 +113,16 @@ Then start with `node test-server.js` instead of `node server.js`. Remember to d
 
 ### LLM Routing Tests
 
-Test different fallback scenarios by varying which env vars are set:
+Test LLM-on/off scenarios by varying which env vars are set:
 
 ```bash
-# Test 1: Full 3-tier config (Sakana primary, Ollama fallback)
-PORT=8090 SAKANA_API_KEY=dummy OLLAMA_BASE_URL=http://localhost:19999 \
-  GEMINI_API_KEY=dummy \
+# Test 1: Gemini configured
+PORT=8090 GEMINI_API_KEY=dummy \
   TELEGRAM_CHAT_ID=12345 TELEGRAM_BOT_TOKEN=dummy_bot_token \
   GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json \
   node test-server.js
 
-# Test 2: Ollama-only (no Sakana/Gemini)
-PORT=8091 OLLAMA_BASE_URL=http://localhost:19999 \
-  TELEGRAM_CHAT_ID=12345 TELEGRAM_BOT_TOKEN=dummy_bot_token \
-  GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json \
-  node test-server.js
-
-# Test 3: No LLM keys at all
+# Test 2: No LLM keys at all
 PORT=8092 TELEGRAM_CHAT_ID=12345 TELEGRAM_BOT_TOKEN=dummy_bot_token \
   GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-key.json \
   node test-server.js
@@ -159,14 +149,10 @@ curl -s -X POST http://localhost:8090/webhook/telegram \
 
 | Scenario | Expected Log Pattern |
 |---|---|
-| Sakana attempted (dummy key) | `Sakana API:` error |
-| Ollama attempted | `[AKA-1] Sakana ... error, trying Ollama fallback:` |
-| Ollama skipped (no URL) | `[AKA-1] OLLAMA_BASE_URL not set, skipping Ollama` |
 | Gemini attempted (dummy key) | `Gemini API: API key not valid` |
-| All LLMs failed | `[AKA-1 エラー] 全 LLM 失敗:` |
+| Gemini call failed | `[AKA-1 エラー] Gemini(gemini-3.8-flash):` |
 | No LLM keys set | `[BOT] Natural language received but no LLM API key set, ignoring` |
-| Startup (Ollama configured) | `Fallback 1: Ollama qwen3.5:9b (configured)` |
-| Startup (Ollama NOT configured) | `Fallback 1: Ollama qwen3.5:9b (NOT configured)` |
+| Startup | `[AKA-1] LLM: GEMINI_MODEL="gemini-3.8-flash" (...)` |
 
 ## Testing AKA-1 Tools Locally
 
@@ -245,16 +231,15 @@ When testing MooMoo tools:
 3. Bridge may be offline (TIALA local machine) — test error handling path too
 
 When testing model/LLM config changes:
-1. Verify startup logs show correct provider priorities (Sakana → Ollama → Gemini)
-2. Verify `/llm` command output shows Ollama tier (NOT Claude)
-3. Verify `/help` text references correct primary model name
-4. Verify natural language triggers correct fallback order via server logs
-5. Verify `aka1LastResponseModel` is updated by all LLM handlers
+1. Verify startup log shows `LLM: GEMINI_MODEL="gemini-3.8-flash" (key set)`
+2. Verify `/llm` command output shows the Gemini model
+3. Verify `/help` text references correct model name
+4. Verify natural language goes to `callGeminiWithTools` via server logs
+5. Verify `aka1LastResponseModel` is updated by the Gemini handler (`modelVersion` in the response)
 
 When testing tool schema changes:
-1. Verify `toOpenAiFunctionTools()` produces `{ type: 'function', function: { name, description, parameters } }` for all tools
-2. Verify `toGeminiFunctionDeclarations()` produces correct Gemini format
-3. Verify tool count matches `AKA1_TOOLS` array length (currently 21)
+1. Verify `toGeminiFunctionDeclarations()` produces correct Gemini format
+2. Verify tool count matches `AKA1_TOOLS` array length (currently 21)
 
 When testing system operation tools:
 1. Verify `checkPolicy()` returns correct result for each command type
@@ -308,5 +293,5 @@ Deploy is done by Jun manually via Cloud Shell after PR merge.
 
 - `GCP_SERVICE_ACCOUNT_KEY` — GCP service account key for BigQuery access (available as org secret)
 - `OPENCLAW_GATEWAY_TOKEN` — Bearer token for the OpenClaw Gateway on TIALA (only needed for live OpenClaw tool tests)
-- `SAKANA_API_KEY` — Only needed if testing the full AKA-1 Sakana loop (not needed for routing tests or tool testing)
+- `GEMINI_API_KEY` — Only needed if testing the full AKA-1 Gemini loop (not needed for tool testing)
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Only needed for live Telegram testing
