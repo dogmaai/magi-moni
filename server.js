@@ -13,7 +13,7 @@
  *   lib/tiala.js         — TIALA service/exec/system/screenshot/action handlers
  *   lib/policy-engine.js — policy checks for system operations
  *   lib/tools.js         — AKA-1 tool definitions + handlers
- *   lib/llm.js           — LLM callers (Sakana/Ollama/Gemini) + handleAka1Chat
+ *   lib/llm.js           — LLM caller (Gemini) + handleAka1Chat
  *   lib/commands.js      — Slash command handler
  *   lib/reports.js       — Daily/weekly report generators
  */
@@ -22,9 +22,7 @@ const { OAuth2Client } = require('google-auth-library');
 
 const {
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_SECRET,
-  SAKANA_API_KEY, SAKANA_MODEL,
-  OLLAMA_BASE_URL, OLLAMA_MODEL,
-  GEMINI_API_KEY, GEMINI_FALLBACK_MODEL,
+  GEMINI_API_KEY, GEMINI_MODEL,
 } = require('./lib/config');
 const { sendTelegramTo, sendTelegram } = require('./lib/telegram');
 const { handleAka1Chat } = require('./lib/llm');
@@ -163,7 +161,7 @@ app.post('/webhook/telegram', async (req, res) => {
       return;
     }
 
-    if (!SAKANA_API_KEY && !OLLAMA_BASE_URL && !GEMINI_API_KEY) {
+    if (!GEMINI_API_KEY) {
       console.log('[BOT] Natural language received but no LLM API key set, ignoring');
       await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定のため自然言語応答は無効です。/help で利用可能なコマンドを確認してください。');
       return;
@@ -204,7 +202,5 @@ app.post('/setup/webhook', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`MAGI Monitoring v4.0 on port ${PORT}`);
-  console.log(`[AKA-1] Primary: SAKANA_MODEL="${SAKANA_MODEL}" (key ${SAKANA_API_KEY ? 'set' : 'NOT set'})`);
-  console.log(`[AKA-1] Fallback 1: Ollama ${OLLAMA_MODEL} (${OLLAMA_BASE_URL ? 'configured' : 'NOT configured'})`);
-  console.log(`[AKA-1] Fallback 2: GEMINI_FALLBACK_MODEL="${GEMINI_FALLBACK_MODEL}" (key ${GEMINI_API_KEY ? 'set' : 'NOT set'})`);
+  console.log(`[AKA-1] LLM: GEMINI_MODEL="${GEMINI_MODEL}" (key ${GEMINI_API_KEY ? 'set' : 'NOT set'})`);
 });
