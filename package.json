@@ -7,7 +7,7 @@
     "test": "node --test lib/__tests__/*.test.js"
   },
   "engines": {
-    "node": "18.x"
+    "node": "^24.22.1"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^7.3.0",
