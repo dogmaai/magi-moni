@@ -31,8 +31,7 @@ them. Discord's one-shot initial callback must succeed before any work or propos
 is created, so duplicate delivery cannot create approvals on another instance.
 This favors safety over availability; it is not durable or broker exactly-once
 execution. Check the state before proposing a replacement operation after an
-uncertain response. Legacy Telegram model mutations now fail closed; explicit
-legacy slash commands remain during rollback.
+uncertain response.
 
 The interaction callback is acknowledged before work, but the HTTP request
 stays open until execution and followup delivery finish. This does not rely on
@@ -40,18 +39,13 @@ background CPU after Cloud Run ends a response. `/report` uses the existing
 daily report generator; `/wr`, `/jobs`, `/today` and `/focus` remain read-only.
 Confirmed focus-symbol additions retain `discord:<user>` in the existing audit column.
 
-Daily/weekly reports select `NOTIFICATION_TRANSPORT=discord` with a Secret Manager
-`DISCORD_WEBHOOK_URL` binding. Missing/invalid Discord configuration does not
-fall back to Telegram. Messages are chunked, mentions suppressed, and send failures
-fail the report endpoint. The deploy workflow uses `--update-env-vars` so Jun's
-Discord configuration is preserved. Disable incoming Telegram and setup routes
-with `TELEGRAM_ENABLED=false` **only after live Discord acceptance**; remove
-Telegram credentials and code in the retirement phase, not during this PR. The
-legacy webhook rejects requests if its token, chat allowlist or webhook secret
-is missing, even when the disable flag has not yet been set.
-See the authoritative `magi-knowledge/system/services/discord-migration.md`
-companion change for acceptance, rollback and teardown gates. Production has
-not been switched by this change.
+Telegram was retired on 2026-11-08 (Jun's decision): there is no Telegram
+webhook, setup route or send code, and no fallback channel. Daily/weekly
+reports go to the Secret Manager `DISCORD_WEBHOOK_URL` webhook; a send failure
+fails the report endpoint. Messages are chunked and mentions suppressed. The
+deploy workflow uses `--update-env-vars` so Jun's Discord configuration is
+preserved. See `magi-knowledge/system/services/discord-migration.md` for the
+acceptance gates, including the mandatory live delivery test of every producer.
 
 ## 🎯 機能
 
@@ -111,18 +105,17 @@ magi-moni/
 - **Email**: devops@example.com
 - **Slack**: #magi-alerts, #magi-critical
 - **SMS**: CRITICAL アラートのみ (オプション)
-- **Telegram**: `@magi_claw_bot` 経由 (`POST /webhook/telegram`)
-  - `@magi_trading_bot` は現在未使用
+- **Discord**: 操作は `POST /webhook/discord`（AKA-1 スラッシュコマンド）、通知は Webhook（Telegram は 2026-11-08 廃止）
 
-## 🤖 Telegram bot エージェント
+## 🤖 Discord AKA-1 エージェント
 
-Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受け付ける:
+Discord interactions (`POST /webhook/discord`) は 2 種類の入力を受け付ける:
 
-1. **Slash コマンド** (`/status` `/wr` `/jobs` `/today` `/help`)
+1. **読取専用 Slash コマンド** (`/status` `/wr` `/jobs` `/today` `/focus` `/llm` `/report` `/help`)
    - 固定 BigQuery クエリを叩いて整形済みテキストを返す（従来機能）
 
-2. **自然文** → **AKA-1 (Gemini `gemini-3.8-flash`) + tool calling**
-   - 認可: `TELEGRAM_CHAT_ID` と一致する chat のみ応答
+2. **`/ask` の自然文** → **AKA-1 (Gemini `gemini-3.8-flash`) + tool calling**
+   - 認可: 署名検証のうえ `DISCORD_OWNER_ID` / `DISCORD_GUILD_ID` / `DISCORD_OPS_CHANNEL_ID` が一致する場合のみ応答
    - 利用ツール (読み取り専用):
      - `get_today_trades` — 本日の取引一覧
      - `get_winrate_by_llm` — LLM × 方向別勝率（過去 N 日）
@@ -135,8 +128,9 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 
 | 名前 | 用途 |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Bot 認証 |
-| `TELEGRAM_CHAT_ID` | 応答先・認可元の Telegram chat ID |
+| `DISCORD_PUBLIC_KEY` / `DISCORD_APPLICATION_ID` | interaction 署名検証・アプリ確認 |
+| `DISCORD_OWNER_ID` / `DISCORD_GUILD_ID` / `DISCORD_OPS_CHANNEL_ID` | 操作の許可対象 |
+| `DISCORD_WEBHOOK_URL` | 日次・週次レポートの通知先（Secret Manager） |
 | `GEMINI_API_KEY` | AKA-1 LLM (Gemini) |
 | `GEMINI_MODEL` | 任意。デフォルト `gemini-3.8-flash` |
 | `PROJECT_ID` | GCP project (default: `screen-share-459802`) |
