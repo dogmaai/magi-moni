@@ -141,6 +141,7 @@ app.post('/report/weekly', async (req, res) => {
 // ===== Telegram Webhook =====
 app.post('/webhook/telegram', async (req, res) => {
   if (process.env.TELEGRAM_ENABLED === 'false') return res.sendStatus(410);
+  if (!WEBHOOK_SECRET || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return res.sendStatus(403);
   if (WEBHOOK_SECRET) {
     const headerSecret = req.headers['x-telegram-bot-api-secret-token'];
     if (headerSecret !== WEBHOOK_SECRET) {
@@ -209,7 +210,9 @@ app.post('/setup/webhook', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+if (require.main === module) app.listen(PORT, '0.0.0.0', () => {
   console.log(`MAGI Monitoring v4.0 on port ${PORT}`);
   console.log(`[AKA-1] LLM: GEMINI_MODEL="${GEMINI_MODEL}" (key ${GEMINI_API_KEY ? 'set' : 'NOT set'})`);
 });
+
+module.exports = app;
