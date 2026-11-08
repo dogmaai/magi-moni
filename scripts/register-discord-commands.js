@@ -16,7 +16,7 @@ async function main() {
   if (!/^\d+$/.test(app || '') || !/^\d+$/.test(guild || '') || !token) throw new Error('Missing Discord application/guild/token');
   if (app === '1568798230559592640') throw new Error('Refusing to overwrite OpenClaw aka application commands');
   const response = await fetch(`https://discord.com/api/v10/applications/${app}/guilds/${guild}/commands`, {
-    method: 'PUT', headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+    method: 'PUT', headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json', 'User-Agent': 'DiscordBot (https://github.com/dogmaai/magi-moni, 1.0.0)' },
     body: JSON.stringify(commands), redirect: 'error', signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) throw new Error(`Discord registration rejected: HTTP ${response.status}`);
