@@ -12,7 +12,7 @@ async function main() {
     console.log(JSON.stringify(commands, null, 2));
     return;
   }
-  const { DISCORD_APPLICATION_ID: app, DISCORD_GUILD_ID: guild, DISCORD_BOT_TOKEN: token } = process.env;
+  const { DISCORD_APPLICATION_ID: app, DISCORD_GUILD_ID: guild, MAGI_DISCORD_BOT_TOKEN: token } = process.env;
   if (!/^\d+$/.test(app || '') || !/^\d+$/.test(guild || '') || !token) throw new Error('Missing Discord application/guild/token');
   if (app === '1568798230559592640') throw new Error('Refusing to overwrite OpenClaw aka application commands');
   const response = await fetch(`https://discord.com/api/v10/applications/${app}/guilds/${guild}/commands`, {

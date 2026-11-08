@@ -14,7 +14,7 @@ Jun must configure `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY`,
 fail closed. Bot message content intent and Administrator permissions are not
 required for these slash commands. `node scripts/register-discord-commands.js`
 is dry-run by default; Jun can register commands with `--apply` and a securely
-bound **MAGI** `DISCORD_BOT_TOKEN` (not the OpenClaw token). Set the application's
+bound `MAGI_DISCORD_BOT_TOKEN` (never the OpenClaw `DISCORD_BOT_TOKEN`). Set the application's
 Interactions Endpoint URL to this service's `/webhook/discord` after deployment.
 
 `/ask` preserves AKA-1 read-only tools. Mutating model tool calls can only propose
@@ -40,7 +40,9 @@ fall back to Telegram. Messages are chunked, mentions suppressed, and send failu
 fail the report endpoint. The deploy workflow uses `--update-env-vars` so Jun's
 Discord configuration is preserved. Disable incoming Telegram and setup routes
 with `TELEGRAM_ENABLED=false` **only after live Discord acceptance**; remove
-Telegram credentials and code in the retirement phase, not during this PR.
+Telegram credentials and code in the retirement phase, not during this PR. The
+legacy webhook rejects requests if its token, chat allowlist or webhook secret
+is missing, even when the disable flag has not yet been set.
 See the authoritative `magi-knowledge/system/services/discord-migration.md`
 companion change for acceptance, rollback and teardown gates. Production has
 not been switched by this change.
