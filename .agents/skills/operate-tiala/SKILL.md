@@ -99,6 +99,8 @@ Notes:
 - `restart`, `exec`, `action` and `agent` were removed; the CLI exits with code
   `2` if called with them. Do not work around this by calling `executeAka1Tool`
   with mutating tools: they fail closed without Jun's Discord confirmation.
+- Likewise do not call `lib/tiala.js` functions such as `restartService`,
+  `executeCommand` or `performAction` directly; they bypass the confirmation.
 - `tiala_restart` blocks manual-restart services (`opend`, `openclaw`, `ttyd`,
   `netdata`) even through Discord; those are restarted by Jun on TIALA.
 
