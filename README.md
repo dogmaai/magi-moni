@@ -2,6 +2,49 @@
 
 MAGI System 全体の監視、ログ、アラート管理を行う Infrastructure as Code リポジトリ。
 
+## Discord staged migration
+
+The MAGI operations application is separate from OpenClaw's `aka` Bot. The new
+`POST /webhook/discord` endpoint validates Ed25519 signatures over the raw request
+body plus timestamp (five-minute freshness limit), then requires the configured
+application, Jun user, private guild and private operations channel.
+
+Jun must configure `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY`,
+`DISCORD_OWNER_ID`, `DISCORD_GUILD_ID`, `DISCORD_OPS_CHANNEL_ID`. Missing values
+fail closed. Bot message content intent and Administrator permissions are not
+required for these slash commands. `node scripts/register-discord-commands.js`
+is dry-run by default; Jun can register commands with `--apply` and a securely
+bound **MAGI** `DISCORD_BOT_TOKEN` (not the OpenClaw token). Set the application's
+Interactions Endpoint URL to this service's `/webhook/discord` after deployment.
+
+`/ask` preserves AKA-1 read-only tools. Mutating model tool calls can only propose
+an immutable operation. Neither an LLM's `confirmed=true` nor a chat reply issues
+an approval. Jun must click the matching ephemeral confirmation button within
+60 seconds. The approval is actor/guild/channel-bound, consumed before execution,
+and never auto-retried. `/kill` directly engages the existing kill switch for
+the authenticated operator; `/resume` always requires confirmation. Existing
+BigQuery order approval TTL, broker order gate and L0 fail-closed logic are unchanged.
+
+Pending confirmations are intentionally process-local and short-lived: restarts,
+deployment, expiry or routing a click to another Cloud Run instance invalidates
+them. Discord's one-shot initial callback must succeed before any work or proposal
+is created, so duplicate delivery cannot create approvals on another instance.
+This favors safety over availability; it is not durable or broker exactly-once
+execution. Check the state before proposing a replacement operation after an
+uncertain response. Legacy Telegram model mutations now fail closed; explicit
+legacy slash commands remain during rollback.
+
+Daily/weekly reports select `NOTIFICATION_TRANSPORT=discord` with a Secret Manager
+`DISCORD_WEBHOOK_URL` binding. Missing/invalid Discord configuration does not
+fall back to Telegram. Messages are chunked, mentions suppressed, and send failures
+fail the report endpoint. The deploy workflow uses `--update-env-vars` so Jun's
+Discord configuration is preserved. Disable incoming Telegram and setup routes
+with `TELEGRAM_ENABLED=false` **only after live Discord acceptance**; remove
+Telegram credentials and code in the retirement phase, not during this PR.
+See the authoritative `magi-knowledge/system/services/discord-migration.md`
+companion change for acceptance, rollback and teardown gates. Production has
+not been switched by this change.
+
 ## 🎯 機能
 
 - ✅ Cloud Run (magi-core) 監視
@@ -102,4 +145,3 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 - [magi-stg](https://github.com/miroqu369/magi-stg)
 - [magi-ac](https://github.com/miroqu369/magi-ac) — ⚠️ アーカイブ済み・監視停止
 - [magi-ui](https://github.com/miroqu369/magi-ui)
-

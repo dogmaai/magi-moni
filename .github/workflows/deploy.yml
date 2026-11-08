@@ -43,5 +43,5 @@ jobs:
             --memory=512Mi \
             --timeout=300 \
             --allow-unauthenticated \
-            --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
+            --update-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
             --update-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest"

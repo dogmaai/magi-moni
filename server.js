@@ -51,6 +51,11 @@ async function verifyInternalRequest(req) {
   }
 }
 
+const { createInteractionHandler } = require('./lib/discord');
+const { executeAka1Tool } = require('./lib/tools');
+app.post('/webhook/discord', express.raw({ type: 'application/json', limit: '256kb' }), createInteractionHandler({
+  ask: handleAka1Chat, command: handleBotCommand, execute: executeAka1Tool,
+}));
 app.use(express.json());
 
 // In-memory trade results buffer (Pub/Sub)
@@ -105,7 +110,8 @@ app.post('/report/daily', async (req, res) => {
   console.log('[MONI] Generating daily report...');
   try {
     const { message, data } = await generateDailyReport();
-    await sendTelegram(message);
+    const delivered = await sendTelegram(message);
+    if (process.env.NOTIFICATION_TRANSPORT === 'discord' && !delivered) throw new Error('Discord report delivery failed');
     console.log('[MONI] Daily report sent');
     res.json({ status: 'ok', message: 'Daily report sent', data });
   } catch (err) {
@@ -122,7 +128,8 @@ app.post('/report/weekly', async (req, res) => {
   console.log('[MONI] Generating weekly report...');
   try {
     const { message, data } = await generateWeeklyReport();
-    await sendTelegram(message);
+    const delivered = await sendTelegram(message);
+    if (process.env.NOTIFICATION_TRANSPORT === 'discord' && !delivered) throw new Error('Discord report delivery failed');
     console.log('[MONI] Weekly report sent');
     res.json({ status: 'ok', message: 'Weekly report sent', data });
   } catch (err) {
@@ -133,6 +140,7 @@ app.post('/report/weekly', async (req, res) => {
 
 // ===== Telegram Webhook =====
 app.post('/webhook/telegram', async (req, res) => {
+  if (process.env.TELEGRAM_ENABLED === 'false') return res.sendStatus(410);
   if (WEBHOOK_SECRET) {
     const headerSecret = req.headers['x-telegram-bot-api-secret-token'];
     if (headerSecret !== WEBHOOK_SECRET) {
@@ -173,6 +181,7 @@ app.post('/webhook/telegram', async (req, res) => {
 
 // ===== Webhook registration =====
 app.post('/setup/webhook', async (req, res) => {
+  if (process.env.TELEGRAM_ENABLED === 'false') return res.sendStatus(410);
   if (!(await verifyInternalRequest(req))) {
     return res.status(403).json({ error: 'Unauthorized' });
   }
