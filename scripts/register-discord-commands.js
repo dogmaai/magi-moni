@@ -3,7 +3,7 @@ const commands = [
   { name: 'ask', description: 'AKA-1に質問・操作を依頼', options: [{ name: 'message', description: '質問・依頼内容', type: 3, required: true }] },
   { name: 'kill', description: '本人による即時緊急停止', options: [{ name: 'reason', description: '停止理由', type: 3 }] },
   { name: 'resume', description: '確認ボタンを経て取引再開' },
-  ...['help', 'status', 'llm', 'report'].map(name => ({ name, description: `AKA-1 ${name}` })),
+  ...['help', 'status', 'llm', 'wr', 'jobs', 'today', 'focus', 'report'].map(name => ({ name, description: `AKA-1 ${name}` })),
 ].map(c => ({ ...c, default_member_permissions: '0' }));
 
 async function main() {

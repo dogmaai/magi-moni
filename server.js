@@ -54,7 +54,7 @@ async function verifyInternalRequest(req) {
 const { createInteractionHandler } = require('./lib/discord');
 const { executeAka1Tool } = require('./lib/tools');
 app.post('/webhook/discord', express.raw({ type: 'application/json', limit: '256kb' }), createInteractionHandler({
-  ask: handleAka1Chat, command: handleBotCommand, execute: executeAka1Tool,
+  ask: handleAka1Chat, command: handleBotCommand, report: generateDailyReport, execute: executeAka1Tool,
 }));
 app.use(express.json());
 

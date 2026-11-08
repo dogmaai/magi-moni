@@ -34,6 +34,12 @@ execution. Check the state before proposing a replacement operation after an
 uncertain response. Legacy Telegram model mutations now fail closed; explicit
 legacy slash commands remain during rollback.
 
+The interaction callback is acknowledged before work, but the HTTP request
+stays open until execution and followup delivery finish. This does not rely on
+background CPU after Cloud Run ends a response. `/report` uses the existing
+daily report generator; `/wr`, `/jobs`, `/today` and `/focus` remain read-only.
+Confirmed focus-symbol additions retain `discord:<user>` in the existing audit column.
+
 Daily/weekly reports select `NOTIFICATION_TRANSPORT=discord` with a Secret Manager
 `DISCORD_WEBHOOK_URL` binding. Missing/invalid Discord configuration does not
 fall back to Telegram. Messages are chunked, mentions suppressed, and send failures
