@@ -2,6 +2,51 @@
 
 MAGI System 全体の監視、ログ、アラート管理を行う Infrastructure as Code リポジトリ。
 
+## Discord staged migration
+
+The MAGI operations application is separate from OpenClaw's `aka` Bot. The new
+`POST /webhook/discord` endpoint validates Ed25519 signatures over the raw request
+body plus timestamp (five-minute freshness limit), then requires the configured
+application, Jun user, private guild and private operations channel.
+
+Jun must configure `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY`,
+`DISCORD_OWNER_ID`, `DISCORD_GUILD_ID`, `DISCORD_OPS_CHANNEL_ID`. Missing values
+fail closed. Bot message content intent and Administrator permissions are not
+required for these slash commands. `node scripts/register-discord-commands.js`
+is dry-run by default; Jun can register commands with `--apply` and a securely
+bound `MAGI_DISCORD_BOT_TOKEN` (never the OpenClaw `DISCORD_BOT_TOKEN`). Set the application's
+Interactions Endpoint URL to this service's `/webhook/discord` after deployment.
+
+`/ask` preserves AKA-1 read-only tools. Mutating model tool calls can only propose
+an immutable operation. Neither an LLM's `confirmed=true` nor a chat reply issues
+an approval. Jun must click the matching ephemeral confirmation button within
+60 seconds. The approval is actor/guild/channel-bound, consumed before execution,
+and never auto-retried. `/kill` directly engages the existing kill switch for
+the authenticated operator; `/resume` always requires confirmation. Existing
+BigQuery order approval TTL, broker order gate and L0 fail-closed logic are unchanged.
+
+Pending confirmations are intentionally process-local and short-lived: restarts,
+deployment, expiry or routing a click to another Cloud Run instance invalidates
+them. Discord's one-shot initial callback must succeed before any work or proposal
+is created, so duplicate delivery cannot create approvals on another instance.
+This favors safety over availability; it is not durable or broker exactly-once
+execution. Check the state before proposing a replacement operation after an
+uncertain response.
+
+The interaction callback is acknowledged before work, but the HTTP request
+stays open until execution and followup delivery finish. This does not rely on
+background CPU after Cloud Run ends a response. `/report` uses the existing
+daily report generator; `/wr`, `/jobs`, `/today` and `/focus` remain read-only.
+Confirmed focus-symbol additions retain `discord:<user>` in the existing audit column.
+
+Telegram was retired on 2026-11-08 (Jun's decision): there is no Telegram
+webhook, setup route or send code, and no fallback channel. Daily/weekly
+reports go to the Secret Manager `DISCORD_WEBHOOK_URL` webhook; a send failure
+fails the report endpoint. Messages are chunked and mentions suppressed. The
+deploy workflow uses `--update-env-vars` so Jun's Discord configuration is
+preserved. See `magi-knowledge/system/services/discord-migration.md` for the
+acceptance gates, including the mandatory live delivery test of every producer.
+
 ## 🎯 機能
 
 - ✅ Cloud Run (magi-core) 監視
@@ -60,18 +105,17 @@ magi-moni/
 - **Email**: devops@example.com
 - **Slack**: #magi-alerts, #magi-critical
 - **SMS**: CRITICAL アラートのみ (オプション)
-- **Telegram**: `@magi_claw_bot` 経由 (`POST /webhook/telegram`)
-  - `@magi_trading_bot` は現在未使用
+- **Discord**: 操作は `POST /webhook/discord`（AKA-1 スラッシュコマンド）、通知は Webhook（Telegram は 2026-11-08 廃止）
 
-## 🤖 Telegram bot エージェント
+## 🤖 Discord AKA-1 エージェント
 
-Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受け付ける:
+Discord interactions (`POST /webhook/discord`) は 2 種類の入力を受け付ける:
 
-1. **Slash コマンド** (`/status` `/wr` `/jobs` `/today` `/help`)
+1. **読取専用 Slash コマンド** (`/status` `/wr` `/jobs` `/today` `/focus` `/llm` `/report` `/help`)
    - 固定 BigQuery クエリを叩いて整形済みテキストを返す（従来機能）
 
-2. **自然文** → **AKA-1 (Gemini `gemini-3.8-flash`) + tool calling**
-   - 認可: `TELEGRAM_CHAT_ID` と一致する chat のみ応答
+2. **`/ask` の自然文** → **AKA-1 (Gemini `gemini-3.8-flash`) + tool calling**
+   - 認可: 署名検証のうえ `DISCORD_OWNER_ID` / `DISCORD_GUILD_ID` / `DISCORD_OPS_CHANNEL_ID` が一致する場合のみ応答
    - 利用ツール (読み取り専用):
      - `get_today_trades` — 本日の取引一覧
      - `get_winrate_by_llm` — LLM × 方向別勝率（過去 N 日）
@@ -84,8 +128,9 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 
 | 名前 | 用途 |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Bot 認証 |
-| `TELEGRAM_CHAT_ID` | 応答先・認可元の Telegram chat ID |
+| `DISCORD_PUBLIC_KEY` / `DISCORD_APPLICATION_ID` | interaction 署名検証・アプリ確認 |
+| `DISCORD_OWNER_ID` / `DISCORD_GUILD_ID` / `DISCORD_OPS_CHANNEL_ID` | 操作の許可対象 |
+| `DISCORD_WEBHOOK_URL` | 日次・週次レポートの通知先（Secret Manager） |
 | `GEMINI_API_KEY` | AKA-1 LLM (Gemini) |
 | `GEMINI_MODEL` | 任意。デフォルト `gemini-3.8-flash` |
 | `PROJECT_ID` | GCP project (default: `screen-share-459802`) |
@@ -102,4 +147,3 @@ Telegram webhook (`POST /webhook/telegram`) は 2 種類のメッセージを受
 - [magi-stg](https://github.com/miroqu369/magi-stg)
 - [magi-ac](https://github.com/miroqu369/magi-ac) — ⚠️ アーカイブ済み・監視停止
 - [magi-ui](https://github.com/miroqu369/magi-ui)
-

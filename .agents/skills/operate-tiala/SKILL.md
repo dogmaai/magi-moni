@@ -1,12 +1,14 @@
 ---
 name: operate-tiala
-description: Operate the TIALA (Mac mini M4) host remotely via the OpenClaw Gateway. Use for checking service status, taking screenshots, running allowlisted commands, controlling the GUI, and delegating tasks to the OpenClaw agent. Always require --confirm for destructive or GUI actions.
+description: Check the TIALA (Mac mini M4) host remotely via the OpenClaw Gateway — service status, system info and screenshots (read-only). Restarts, commands, GUI actions and agent delegation are not available here; they go through Discord with Jun's confirmation.
 ---
 
 # Operate TIALA
 
 TIALA is a Mac mini M4 host running local services (Ollama, OpenD, moomoo-bridge,
-OpenClaw Gateway). Devin can operate it through `magi-moni`'s OpenClaw client.
+OpenClaw Gateway). Devin can check it (read-only) through `magi-moni`'s OpenClaw client.
+Since 2026-11-09 (Jun's decision) every change to TIALA goes through Discord `/ask`,
+where Jun approves it with the confirmation button.
 
 ## Prerequisites
 
@@ -29,8 +31,8 @@ bash scripts/install-openclaw-launchagent.sh openclaw.khaos.company
 
 ## Quick CLI
 
-`magi-moni/scripts/operate-tiala.js` wraps all TIALA operations. Use it when the
-user asks anything about TIALA status, screenshots, commands, or GUI actions.
+`magi-moni/scripts/operate-tiala.js` wraps the read-only TIALA checks. Use it when
+the user asks about TIALA status or wants a screenshot.
 
 ```bash
 cd ~/repos/magi-moni
@@ -42,20 +44,8 @@ node scripts/operate-tiala.js system
 # Capture the TIALA screen
 node scripts/operate-tiala.js screenshot /tmp/tiala.jpg
 
-# Restart an auto-restartable service
-node scripts/operate-tiala.js restart ollama --confirm
-
-# Execute an allowlisted command
-node scripts/operate-tiala.js exec --command="ollama list" --confirm
-
-# GUI actions (coordinates must be obtained from a screenshot first)
-node scripts/operate-tiala.js action --action=click --coordinate=100,200 --confirm
-node scripts/operate-tiala.js action --action=type --text="hello" --confirm
-node scripts/operate-tiala.js action --action=hotkey --keys=cmd,space --confirm
-node scripts/operate-tiala.js action --action=scroll --coordinate=500,300 --direction=down --amount=10 --confirm
-
-# Delegate a task to the OpenClaw agent
-node scripts/operate-tiala.js agent "Safariを開いてdogma.jpを表示して" --confirm
+# restart / exec / action / agent were removed: ask Jun to request the change
+# in Discord (/ask) and approve it with the confirmation button.
 ```
 
 ## HTTP 401 Unauthorized
@@ -106,12 +96,13 @@ Notes:
 - `services` and `system` are read-only and safe.
 - `screenshot` is read-only but can expose screen contents; do not share with
   untrusted parties.
-- `restart`, `exec`, `action`, and `agent` require `--confirm`.
-- The CLI exits with code `2` and prints a `confirmation_required` payload when
-  `--confirm` is missing. Re-run the same command with `--confirm` after the
-  user agrees.
+- `restart`, `exec`, `action` and `agent` were removed; the CLI exits with code
+  `2` if called with them. Do not work around this by calling `executeAka1Tool`
+  with mutating tools: they fail closed without Jun's Discord confirmation.
+- Likewise do not call `lib/tiala.js` functions such as `restartService`,
+  `executeCommand` or `performAction` directly; they bypass the confirmation.
 - `tiala_restart` blocks manual-restart services (`opend`, `openclaw`, `ttyd`,
-  `netdata`) and returns an error; do not attempt to restart those automatically.
+  `netdata`) even through Discord; those are restarted by Jun on TIALA.
 
 ## Environment Variables
 
