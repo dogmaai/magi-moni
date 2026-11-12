@@ -1,12 +1,14 @@
 /**
  * MAGI Monitoring Service — server.js (entry point)
  *
- * Telegram Bot (actual: @magi_trading_bot; legacy: @magi_claw_bot) + AKA-1 agent + reporting.
- * magi-moni serves Telegram bot + AKA-1 agent. TIALA remote operations use OpenClaw Gateway.
+ * Discord operations (AKA-1 slash commands + human approval buttons) and reporting.
+ * Telegram was retired on 2026-11-08 (Jun); Discord is the only channel.
+ * TIALA remote operations use OpenClaw Gateway.
  *
  * Modules:
  *   lib/config.js        — env vars, constants
- *   lib/telegram.js      — Telegram send helpers
+ *   lib/messaging.js     — outbound messages (Discord)
+ *   lib/discord.js       — Discord interactions endpoint, approvals, webhook
  *   lib/bigquery.js      — BQ client + runQuery
  *   lib/moomoo.js        — magi-moomoo proxy client
  *   lib/openclaw.js      — OpenClaw Gateway client for TIALA remote ops
@@ -20,11 +22,8 @@
 const express = require('express');
 const { OAuth2Client } = require('google-auth-library');
 
-const {
-  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_SECRET,
-  GEMINI_API_KEY, GEMINI_MODEL,
-} = require('./lib/config');
-const { sendTelegramTo, sendTelegram } = require('./lib/telegram');
+const { GEMINI_API_KEY, GEMINI_MODEL } = require('./lib/config');
+const { sendNotification } = require('./lib/messaging');
 const { handleAka1Chat } = require('./lib/llm');
 const { handleBotCommand } = require('./lib/commands');
 const { generateDailyReport, generateWeeklyReport } = require('./lib/reports');
@@ -110,8 +109,8 @@ app.post('/report/daily', async (req, res) => {
   console.log('[MONI] Generating daily report...');
   try {
     const { message, data } = await generateDailyReport();
-    const delivered = await sendTelegram(message);
-    if (process.env.NOTIFICATION_TRANSPORT === 'discord' && !delivered) throw new Error('Discord report delivery failed');
+    const delivered = await sendNotification(message);
+    if (!delivered) throw new Error('Discord report delivery failed');
     console.log('[MONI] Daily report sent');
     res.json({ status: 'ok', message: 'Daily report sent', data });
   } catch (err) {
@@ -128,86 +127,14 @@ app.post('/report/weekly', async (req, res) => {
   console.log('[MONI] Generating weekly report...');
   try {
     const { message, data } = await generateWeeklyReport();
-    const delivered = await sendTelegram(message);
-    if (process.env.NOTIFICATION_TRANSPORT === 'discord' && !delivered) throw new Error('Discord report delivery failed');
+    const delivered = await sendNotification(message);
+    if (!delivered) throw new Error('Discord report delivery failed');
     console.log('[MONI] Weekly report sent');
     res.json({ status: 'ok', message: 'Weekly report sent', data });
   } catch (err) {
     console.error('[MONI] Weekly report error:', err.message);
     res.status(500).json({ error: err.message });
   }
-});
-
-// ===== Telegram Webhook =====
-app.post('/webhook/telegram', async (req, res) => {
-  if (process.env.TELEGRAM_ENABLED === 'false') return res.sendStatus(410);
-  if (!WEBHOOK_SECRET || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return res.sendStatus(403);
-  if (WEBHOOK_SECRET) {
-    const headerSecret = req.headers['x-telegram-bot-api-secret-token'];
-    if (headerSecret !== WEBHOOK_SECRET) {
-      console.log('[BOT] Rejected webhook: invalid secret token');
-      return res.status(403).send('Forbidden');
-    }
-  }
-  res.status(200).send('OK');
-  try {
-    const update = req.body;
-    const message = update.message || update.edited_message;
-    if (!message || !message.text) return;
-
-    const chatId = message.chat.id.toString();
-    if (TELEGRAM_CHAT_ID && chatId !== TELEGRAM_CHAT_ID) {
-      console.log(`[BOT] Ignoring chat ${chatId} (not authorized)`);
-      return;
-    }
-
-    const text = message.text.replace(/@magi_[a-z0-9_]*_bot\b/gi, '').trim();
-    if (!text) return;
-
-    if (text.startsWith('/')) {
-      console.log(`[BOT] Command: ${text}`);
-      await handleBotCommand(chatId, text);
-      return;
-    }
-
-    if (!GEMINI_API_KEY) {
-      console.log('[BOT] Natural language received but no LLM API key set, ignoring');
-      await sendTelegramTo(chatId, '[AKA-1] LLM API キーが未設定のため自然言語応答は無効です。/help で利用可能なコマンドを確認してください。');
-      return;
-    }
-
-    await handleAka1Chat(chatId, text);
-  } catch (e) { console.error('[BOT] Webhook error:', e.message); }
-});
-
-// ===== Webhook registration =====
-app.post('/setup/webhook', async (req, res) => {
-  if (process.env.TELEGRAM_ENABLED === 'false') return res.sendStatus(410);
-  if (!(await verifyInternalRequest(req))) {
-    return res.status(403).json({ error: 'Unauthorized' });
-  }
-  try {
-    const webhookUrl = `https://magi-moni-398890937507.asia-northeast1.run.app/webhook/telegram`;
-    const result = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: webhookUrl, secret_token: WEBHOOK_SECRET }),
-    });
-    const data = await result.json();
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ commands: [
-        { command: 'status', description: 'LLM API死活 + 本日サマリー' },
-        { command: 'wr', description: 'LLM x 方向別勝率テーブル' },
-        { command: 'jobs', description: 'Cloud Run Jobs状態' },
-        { command: 'today', description: '本日の取引一覧' },
-        { command: 'llm', description: 'AKA-1 の現在の LLM 設定' },
-        { command: 'help', description: 'コマンド一覧' },
-      ]}),
-    });
-    res.json({ webhookUrl, result: data });
-  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 if (require.main === module) app.listen(PORT, '0.0.0.0', () => {
