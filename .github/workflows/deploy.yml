@@ -32,9 +32,10 @@ jobs:
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
 
       - name: Deploy to Cloud Run
-        # --update-secrets を使うことで既存の secret マウント (例: 手動設定済みの
-        # DISCORD_WEBHOOK_URL) を保持しつつ API キーを追加できる。
-        # --set-secrets は全リセットなので使わない。
+        # --update-secrets を使うことで既存の secret マウントを保持しつつ
+        # 必要な secret を追加できる。--set-secrets は全リセットなので使わない。
+        # DISCORD_WEBHOOK_URL: 日次・週次レポートの唯一の通知先 (lib/discord.js)。
+        # 手動設定に頼らず毎回のデプロイでバインドする (Jun 2026-11-12)。
         # --max-instances=1: 承認待ちはプロセス内保持のため、ボタン押下が別
         # インスタンスに届かないよう 1 台に固定する (Jun 2026-11-09)。
         run: |
@@ -47,4 +48,4 @@ jobs:
             --max-instances=1 \
             --allow-unauthenticated \
             --update-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
-            --update-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest"
+            --update-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest,DISCORD_WEBHOOK_URL=DISCORD_WEBHOOK_URL:latest"
