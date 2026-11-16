@@ -22,7 +22,7 @@ magi-moni is a Cloud Run **service** (not a job) running an Express server with:
 - Modular architecture: `lib/config.js`, `lib/tools.js`, `lib/llm.js`, `lib/commands.js`, `lib/reports.js`, etc.
 - AKA-1 uses Gemini (gemini-3.8-flash) as its sole LLM with tool calling
 - Sakana AI (fugu) and the Ollama (TIALA) fallback were removed 2026-10-02 — Gemini is the only provider
-- 21 tools total: 6 BQ read + 5 MooMoo + 6 TIALA ops + 1 OpenClaw agent + 3 system ops
+- 19 tools: BigQuery read, MooMoo, focus symbols, system ops and kill switch. The TIALA / OpenClaw tools were removed on 2026-11-16 (Jun)
 - Pub/Sub endpoint for trade result ingestion
 
 ## LLM Provider Architecture
@@ -45,9 +45,8 @@ The codebase is split into focused modules under `lib/`:
 | `lib/telegram.js` | `sendTelegram`, `sendTypingAction` helpers |
 | `lib/bigquery.js` | BQ client + `runQuery` helper |
 | `lib/moomoo.js` | magi-moomoo Cloud Run proxy client (OIDC) |
-| `lib/tiala.js` | TIALA operation handlers via OpenClaw Gateway tool invocation |
 | `lib/policy-engine.js` | `checkPolicy()` for system operations |
-| `lib/tools.js` | `AKA1_TOOLS[21]` + `executeAka1Tool` + format converters |
+| `lib/tools.js` | `AKA1_TOOLS[19]` + `executeAka1Tool` + format converters |
 | `lib/llm.js` | `callGeminiWithTools` + `handleAka1Chat` |
 | `lib/commands.js` | Slash command handler (`handleBotCommand`) |
 | `lib/reports.js` | Daily/weekly report generators |
@@ -246,31 +245,12 @@ When testing system operation tools:
 2. Verify 2-step confirmation flow (no confirmed → confirmation_required, confirmed=true → executed)
 3. **Never call `trigger_job` or `trigger_optuna` with `confirmed=true` in testing** — this would execute real Cloud Scheduler jobs
 
-### TIALA Operation Tools
+### TIALA Operation Tools (removed)
 
-| Tool | Operation | Policy |
-|---|---|---|
-| `tiala_services` | Query TIALA service statuses (Ollama, OpenD, bridge, etc.) | safe |
-| `tiala_system` | Get CPU/memory/disk/uptime info | safe |
-| `tiala_screenshot` | Capture TIALA screen via `screencapture` and send it to Telegram as a JPEG | safe |
-| `tiala_restart` | Restart a TIALA service | confirm_required |
-| `tiala_exec` | Execute allowlisted command on TIALA | confirm_required |
-| `tiala_action` | Perform a GUI action on TIALA (click/type/key/scroll/etc.) | confirm_required |
-| `openclaw_agent` | Delegate a task to the OpenClaw agent (Sonnet 5) using exec/browser tools | confirm_required |
-
-TIALA tools use the same 2-step confirmation flow as system ops. They call the OpenClaw Gateway on TIALA (port 18789) via `lib/openclaw.js`, which discovers the URL from BQ `service_endpoints` (service='openclaw').
-
-`openclaw_agent` uses the OpenClaw Gateway `/v1/chat/completions` endpoint. It requires `gateway.http.endpoints.chatCompletions.enabled: true` in `~/.openclaw/openclaw.json`. The docs warn against exposing this endpoint to the public internet; prefer Tailscale/private ingress when possible. Note: screen viewing through this agent requires an OpenClaw `computer` node; for TIALA screen control use `tiala_screenshot` + `tiala_action`.
-
-`tiala_screenshot` and `tiala_action` no longer require a paired OpenClaw `computer` node. They use `exec` on the gateway host to run macOS `screencapture` and `osascript` / `cliclick`. The full screenshot base64 is cached in `lib/tiala.js` and sent to the Telegram chat by `handleAka1Chat` after the LLM response.
-
-When testing TIALA tools:
-1. Without `openclaw` in BQ, `tiala_services`/`tiala_system`/`tiala_screenshot` throw "OpenClaw URL not found in service_endpoints" — test this error path
-2. `tiala_restart`/`tiala_exec`/`tiala_action`/`openclaw_agent` without `confirmed` return `{status: 'confirmation_required'}` — this works without network access
-3. Policy engine: `tiala_restart(opend)` is HIGH RISK (danger message about trade connection), `tiala_exec(git pull)` and `tiala_exec(ollama pull ...)` are HIGH RISK
-4. **Never call `tiala_restart`, `tiala_exec`, `tiala_action`, or `openclaw_agent` with `confirmed=true` against real TIALA** — this would restart services, execute commands, control the GUI, or run an autonomous agent on the production Mac mini
-5. `/help` should show a TIALA操作 section with examples
-6. URL cache TTL is 1 minute in `lib/openclaw.js` — if testing repeated calls, be aware of caching
+Removed on 2026-11-16 (Jun): magi-moni no longer calls the OpenClaw Gateway on
+TIALA (`lib/tiala.js`, `lib/openclaw.js`, `scripts/operate-tiala.js` and the
+`tiala_*` / `openclaw_agent` tools are gone). Calling one of those names returns
+`Unknown tool`. Do not reintroduce TIALA access without Jun's decision.
 
 ## Telegram Webhook Gotchas
 
@@ -292,6 +272,5 @@ Deploy is done by Jun manually via Cloud Shell after PR merge.
 ## Devin Secrets Needed
 
 - `GCP_SERVICE_ACCOUNT_KEY` — GCP service account key for BigQuery access (available as org secret)
-- `OPENCLAW_GATEWAY_TOKEN` — Bearer token for the OpenClaw Gateway on TIALA (only needed for live OpenClaw tool tests)
 - `GEMINI_API_KEY` — Only needed if testing the full AKA-1 Gemini loop (not needed for tool testing)
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Only needed for live Telegram testing

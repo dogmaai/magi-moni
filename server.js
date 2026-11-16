@@ -3,7 +3,8 @@
  *
  * Discord operations (AKA-1 slash commands + human approval buttons) and reporting.
  * Telegram was retired on 2026-11-08 (Jun); Discord is the only channel.
- * TIALA remote operations use OpenClaw Gateway.
+ * TIALA remote operations were removed on 2026-11-16 (Jun): magi-moni has no
+ * TIALA/OpenClaw Gateway access.
  *
  * Modules:
  *   lib/config.js        — env vars, constants
@@ -11,8 +12,6 @@
  *   lib/discord.js       — Discord interactions endpoint, approvals, webhook
  *   lib/bigquery.js      — BQ client + runQuery
  *   lib/moomoo.js        — magi-moomoo proxy client
- *   lib/openclaw.js      — OpenClaw Gateway client for TIALA remote ops
- *   lib/tiala.js         — TIALA service/exec/system/screenshot/action handlers
  *   lib/policy-engine.js — policy checks for system operations
  *   lib/tools.js         — AKA-1 tool definitions + handlers
  *   lib/llm.js           — LLM caller (Gemini) + handleAka1Chat
