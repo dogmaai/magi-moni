@@ -135,6 +135,25 @@ Discord interactions (`POST /webhook/discord`) は 2 種類の入力を受け付
 | `GEMINI_MODEL` | 任意。デフォルト `gemini-3.8-flash` |
 | `PROJECT_ID` | GCP project (default: `screen-share-459802`) |
 
+## 🔁 PLM lifecycle watch (`POST /monitor/plm-lifecycle`)
+
+OIDC で保護された内部エンドポイント（Cloud Scheduler から日次呼び出し想定）。
+アクティブ PLM 6 プロバイダについて、(a) provider models API に設定モデルが
+存在するか（ページング対応）、(b) `thoughts.model_version` の 7 日ドリフト、
+(c) provider ドキュメント上の廃止・破壊的変更・リリース告知（Gemini 抽出）、
+(d) TIALA Ollama サーバの最新リリース比較を行い、finding がある場合のみ
+Discord に通知する。JSON レスポンスは findings / checks / drift / docScans /
+ollamaVersion の完全レポートを返す。
+
+Scheduler 例: `gcloud scheduler jobs create http plm-lifecycle --schedule "0 3 * * *"
+--http-method POST --uri <SERVICE_URL>/monitor/plm-lifecycle
+--oidc-service-account-email <SA> --oidc-token-audience <SERVICE_URL>`
+
+追加 env（deploy.yml `--update-secrets` 済み）: `OPENAI_API_KEY` `DEEPSEEK_API_KEY`
+`QWEN_API_KEY` `KIMI_API_KEY`（models API 認証）、`OLLAMA_BASE_URL` /
+`OLLAMA_AUTH_TOKEN`（BOREAS 読み取り専用チェック。未バインド時は skipped）。
+仕様: magi-knowledge `system/services/plm-lifecycle-watch.md`（draft）。
+
 ## 📈 SLA 目標
 
 - 可用性: 99.9%

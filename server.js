@@ -26,6 +26,7 @@ const { sendNotification } = require('./lib/messaging');
 const { handleAka1Chat } = require('./lib/llm');
 const { handleBotCommand } = require('./lib/commands');
 const { generateDailyReport, generateWeeklyReport } = require('./lib/reports');
+const { runPlmLifecycleCheck, formatNotification } = require('./lib/plm-lifecycle');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -132,6 +133,39 @@ app.post('/report/weekly', async (req, res) => {
     res.json({ status: 'ok', message: 'Weekly report sent', data });
   } catch (err) {
     console.error('[MONI] Weekly report error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== PLM API lifecycle check (Cloud Scheduler, e.g. daily) =====
+// Checks each active PLM's model against its provider's model list and
+// diffs thoughts.model_version against the configured id. Notifies Discord
+// only when there are findings; the JSON body is the full report either way.
+app.post('/monitor/plm-lifecycle', async (req, res) => {
+  if (!(await verifyInternalRequest(req))) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  console.log('[MONI] Running PLM lifecycle check...');
+  try {
+    const result = await runPlmLifecycleCheck();
+    if (result.findings.length > 0) {
+      const delivered = await sendNotification(formatNotification(result));
+      if (!delivered) throw new Error('Discord notification delivery failed');
+      console.log(`[MONI] PLM lifecycle: ${result.findings.length} finding(s) notified`);
+    } else {
+      console.log('[MONI] PLM lifecycle: all providers healthy');
+    }
+    res.json({
+      status: 'ok',
+      findingCount: result.findings.length,
+      findings: result.findings,
+      checks: result.checks,
+      drift: result.drift,
+      docScans: result.docScans,
+      ollamaVersion: result.ollamaVersion,
+    });
+  } catch (err) {
+    console.error('[MONI] PLM lifecycle error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
