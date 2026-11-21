@@ -48,4 +48,4 @@ jobs:
             --max-instances=1 \
             --allow-unauthenticated \
             --update-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
-            --update-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest,DISCORD_WEBHOOK_URL=DISCORD_WEBHOOK_URL:latest"
+            --update-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest,DISCORD_WEBHOOK_URL=DISCORD_WEBHOOK_URL:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,DEEPSEEK_API_KEY=DEEPSEEK_API_KEY:latest,QWEN_API_KEY=QWEN_API_KEY:latest,KIMI_API_KEY=KIMI_API_KEY:latest,OLLAMA_BASE_URL=OLLAMA_BASE_URL:latest,OLLAMA_AUTH_TOKEN=OLLAMA_AUTH_TOKEN:latest"
