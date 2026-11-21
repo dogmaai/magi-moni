@@ -155,7 +155,15 @@ app.post('/monitor/plm-lifecycle', async (req, res) => {
     } else {
       console.log('[MONI] PLM lifecycle: all providers healthy');
     }
-    res.json({ status: 'ok', findings: result.findings.length, checks: result.checks, drift: result.drift });
+    res.json({
+      status: 'ok',
+      findingCount: result.findings.length,
+      findings: result.findings,
+      checks: result.checks,
+      drift: result.drift,
+      docScans: result.docScans,
+      ollamaVersion: result.ollamaVersion,
+    });
   } catch (err) {
     console.error('[MONI] PLM lifecycle error:', err.message);
     res.status(500).json({ error: err.message });
